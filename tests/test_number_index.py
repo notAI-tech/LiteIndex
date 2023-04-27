@@ -1,14 +1,16 @@
 import unittest
 import os
-from number_index import NumberIndex
 from random import randint, choice
 from string import ascii_lowercase
 from time import time
 from concurrent.futures import ThreadPoolExecutor
 import diskcache
 import shutil
-import multiprocessing
-from multiprocessing import Pool
+
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from liteindex import NumberIndex
 
 class TestNumberIndex(unittest.TestCase):
     def setUp(self):
@@ -18,6 +20,10 @@ class TestNumberIndex(unittest.TestCase):
 
     def tearDown(self):
         os.remove(self.db_path)
+        os.remove(path=f"{self.db_path}-wal")
+        os.remove(path=f"{self.db_path}-shm")
+
+
 
     def test_basic_operations(self):
         self.index["one"] = 1

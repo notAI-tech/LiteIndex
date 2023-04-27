@@ -1,8 +1,14 @@
+import json
 import sqlite3
 from typing import Union, Tuple, Optional, Any, Callable, Dict, Iterable
 
+import sqlite3
+import json
+from collections.abc import MutableMapping, MutableSequence
+from typing import Any, Optional
+from .dict_index_helpers import NestedDictProxy, NestedListProxy
 
-class NumberIndex:
+class AnyIndex(MutableMapping):
     def __init__(self, name: str, db_path: str):
         self.name = name
         self.db_path = db_path
@@ -15,31 +21,66 @@ class NumberIndex:
         self._connection.execute(f"""
             CREATE TABLE IF NOT EXISTS {self.name} (
                 key TEXT PRIMARY KEY,
-                value REAL
+                value JSON
             );
         """)
+        self._connection.commit()
+    
+    def close(self):
+        if self._connection:
+            self._connection.close()
+            self._connection = None
 
-        self._connection.execute(f"""
-            CREATE INDEX IF NOT EXISTS {self.name}_value_index ON {self.name}(value);
-        """)
+    def __getitem__(self, key: str) -> Optional[Any]:
+        value = self._get_nested_item(key, '$')
+        
+        if value is None:
+            raise KeyError(key)
 
+        if isinstance(value, dict):
+            return NestedDictProxy(self, key)
+        elif isinstance(value, list):
+            return NestedListProxy(self, key)
+        return value
+
+    def _get_nested_item(self, key: str, path: str) -> Any:
+        cursor = self._connection.cursor()
+        cursor.execute(f"SELECT json_extract(value, ?) FROM {self.name} WHERE key=?", (path, key))
+        result = cursor.fetchone()
+        if result:
+            try:
+                return json.loads(result[0])
+            except:
+                return result[0]
+        return None
+
+    def _set_nested_item(self, outer_key, path, value):
+        cursor = self._connection.cursor()
+        cursor.execute(
+            f"UPDATE {self.name} SET value=json_set(value, ?, json(?)) WHERE key=?",
+            (path, json.dumps(value), outer_key)
+        )
         self._connection.commit()
 
-    def __getitem__(self, key: str) -> Union[float, int, None]:
+    def _remove_nested_item(self, outer_key, path):
         cursor = self._connection.cursor()
-        cursor.execute(f"SELECT value FROM {self.name} WHERE key=?", (key,))
-        result = cursor.fetchone()
-        return result[0] if result else None
+        cursor.execute(
+            f"UPDATE {self.name} SET value=json_remove(value, ?) WHERE key=?",
+            (path, outer_key)
+        )
+        self._connection.commit()
 
-    def __setitem__(self, key: str, value: Union[float, int]):
-        if not isinstance(value, (float, int)):
-            raise ValueError("Value must be either float or int")
-
+    def _insert_nested_item(self, outer_key, path, value):
         cursor = self._connection.cursor()
-        cursor.execute(f"""
-            INSERT OR REPLACE INTO {self.name} (key, value)
-            VALUES (?, ?)
-        """, (key, value))
+        cursor.execute(
+            f"UPDATE {self.name} SET value=json_insert(value, ?, json(?)) WHERE key=?",
+            (path, json.dumps(value), outer_key)
+        )
+        self._connection.commit()
+
+    def __setitem__(self, key: str, value: Any):
+        cursor = self._connection.cursor()
+        cursor.execute(f"INSERT OR REPLACE INTO {self.name}(key, value) VALUES (?, json(?))", (key, json.dumps(value)))
         self._connection.commit()
 
     def __delitem__(self, key: str):
@@ -55,7 +96,7 @@ class NumberIndex:
         cursor.execute(f"SELECT COUNT(*) FROM {self.name}")
         return cursor.fetchone()[0]
 
-    def __iter__(self)  -> Iterable[str]:
+    def __iter__(self) -> Iterable[str]:
         return self.keys()
 
     def keys(self) -> Iterable[str]:
@@ -147,24 +188,49 @@ class NumberIndex:
 
 
 if __name__ == "__main__":
-    index = NumberIndex("my_index", "my_database.sqlite")
-    # Setting values
-    index["one"] = 1
-    index["two"] = 2.0
+    d = AnyIndex("test_db", "test.db")
 
-    # Getting values
-    print(index["one"])  # Output: 1
-    print(index["two"])  # Output: 2.0
+    # Test simple key-value pairs
+    d["key1"] = "value1"
+    assert d["key1"] == "value1"
 
-    # Deleting values
-    del index["one"]
+    d["key2"] = 42
+    assert d["key2"] == 42
 
-    index.update({"three": 3, "four": 4.0})
+    # Test a nested dictionary
+    d["key3"] = {"nested_key1": "nested_value1", "nested_key2": {"nested_key3": "nested_value2"}}
+    assert d["key3"]["nested_key1"] == "nested_value1"
+    assert d["key3"]["nested_key2"]["nested_key3"] == "nested_value2"
 
-    # Checking if a key is in the index
-    print("one" in index)  # Output: False
-    print("two" in index)  # Output: True
-    print("three" in index)  # Output: True
+    # Test updating a nested dictionary
+    d["key3"]["nested_key2"]["nested_key3"] = "updated_nested_value2"
+    assert d["key3"]["nested_key2"]["nested_key3"] == "updated_nested_value2"
 
-    for key in index:
+    # Test a nested list
+    d["key4"] = [1, 2, 3, ["nested_list_item1", "nested_list_item2"]]
+    assert d["key4"][0] == 1
+    assert d["key4"][3][1] == "nested_list_item2"
+
+    # Test updating a nested list
+    d["key4"][3][1] = "updated_nested_list_item2"
+    assert d["key4"][3][1] == "updated_nested_list_item2"
+
+    # Test deleting a key
+    del d["key1"]
+    try:
+        _ = d["key1"]
+    except KeyError:
+        print("key1 successfully deleted")
+
+    # Test iteration
+    print("Iterating over keys:")
+    for key in d:
         print(key)
+
+    # Test length
+    print(f"Length: {len(d)}")
+
+    d["testAAA"] = {'wqDFOyquKhtMjfRtgYYcQJmXHkQpwcbAlJqLQqqUp': 'g', 'AGRzfpfhK': {'QnyPcxXWY': ['BqcMJuFH', 48], 'ksfD': 39, 'cenIanGoAZNBwEfzObaaSOagJaGoMSbAWCoZbJJHHbzbnOUOHS': [71, 49, 'LA', 1]}, 'XqOPDKbnFZ': {'aJYdC': 'Initial value'}}
+
+
+    print("All tests passed!")
