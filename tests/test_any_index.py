@@ -139,31 +139,22 @@ class TestAnyIndex(unittest.TestCase):
 
     def test_nested_dict(self):
         test_key = self.random_key()
-        logging.debug(f"Test key: {test_key}")
 
         test_key_2 = self.random_key()
-        logging.debug(f"Test key 2: {test_key_2}")
 
         test_dict = generate_random_dict_or_list()
 
         test_key_3 = self.random_key(5)
-        logging.debug(f"Test key 3: {test_key_3}")
 
         test_dict[test_key_2] = {test_key_3: "Initial value"}
 
-        logging.debug(f"Test dict: {test_dict}")
-
-        logging.debug(f"trying to set {test_key} to {test_dict}")
         self.index[test_key] = test_dict
         initial_value = self.index[test_key][test_key_2][test_key_3]
-        logging.debug(f"Initial value for [{test_key}][{test_key_2}][{test_key_3}]: {initial_value}")
 
         updated_value = "Updated value"
         self.index[test_key][test_key_2][test_key_3] = updated_value
-        logging.debug(f"Updated value for [{test_key}][{test_key_2}][{test_key_3}] to: {updated_value}")
 
         retrieved_value = self.index[test_key][test_key_2][test_key_3]
-        logging.debug(f"Retrieved value for [{test_key}][{test_key_2}][{test_key_3}]: {retrieved_value}")
 
         self.assertEqual(updated_value, retrieved_value)
         self.assertNotEqual(initial_value, retrieved_value)

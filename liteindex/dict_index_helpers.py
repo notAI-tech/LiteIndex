@@ -1,6 +1,6 @@
 from collections.abc import MutableMapping, MutableSequence
 
-class NestedDictProxy:
+class AnyDict:
     def __init__(self, anyindex_instance, key, path=None):
         self._anyindex_instance = anyindex_instance
         self._key = key
@@ -17,9 +17,9 @@ class NestedDictProxy:
         value = self._anyindex_instance._get_nested_item(self._key, path)
         
         if isinstance(value, dict):
-            return NestedDictProxy(self._anyindex_instance, self._key, path)
+            return AnyDict(self._anyindex_instance, self._key, path)
         elif isinstance(value, list):
-            return NestedListProxy(self._anyindex_instance, self._key, path)
+            return AnyList(self._anyindex_instance, self._key, path)
         return value
 
     def __setitem__(self, key, value):
@@ -44,28 +44,17 @@ class NestedDictProxy:
             yield (key, self[key])
 
     def get_object(self):
-        def _nested_to_dict(proxy_obj):
-            output = {}
-            keys_dict = proxy_obj._anyindex_instance._get_nested_item(proxy_obj._key, proxy_obj._path)
-            if keys_dict is not None and isinstance(keys_dict, dict):
-                for key in keys_dict.keys():
-                    path = proxy_obj._path_with_key(key)
-                    value = proxy_obj._anyindex_instance._get_nested_item(proxy_obj._key, path)
-                    if isinstance(value, dict):
-                        nested_proxy = NestedDictProxy(proxy_obj._anyindex_instance, proxy_obj._key, path)
-                        value = _nested_to_dict(nested_proxy)
-                    elif isinstance(value, list):
-                        nested_list = []
-                        for idx, item in enumerate(value):
-                            if isinstance(item, dict):
-                                nested_proxy = NestedDictProxy(proxy_obj._anyindex_instance, proxy_obj._key, f"{path}[{idx}]")
-                                item = _nested_to_dict(nested_proxy)
-                            nested_list.append(item)
-                        value = nested_list
-                    output[key] = value
-            return output
-
-        return _nested_to_dict(self)
+        exported_dict = {}
+        for key, value in self.items():
+            if isinstance(value, AnyDict):
+                print('---', value.get_object())
+                exported_dict[key] = value.get_object()
+            elif isinstance(value, AnyList):
+                print('===', value.get_object())
+                exported_dict[key] = value.get_object()
+            else:
+                exported_dict[key] = value
+        return exported_dict
     
     def get(self, key, default=None):
         try:
@@ -108,7 +97,7 @@ class NestedDictProxy:
             self[key] = default
             return default
 
-class NestedListProxy(NestedDictProxy, MutableSequence):
+class AnyList(AnyDict, MutableSequence):
     def __len__(self):
         return len(self._anyindex_instance._get_nested_item(self._key, self._path))
     

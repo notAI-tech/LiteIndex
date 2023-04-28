@@ -1,12 +1,15 @@
 import json
 import sqlite3
-from typing import Union, Tuple, Optional, Any, Callable, Dict, Iterable
+from typing import Union, Tuple, Optional, Any, Callable, Dict, Iterable, List
 
 import sqlite3
 import json
 from collections.abc import MutableMapping, MutableSequence
 from typing import Any, Optional
-from .dict_index_helpers import NestedDictProxy, NestedListProxy
+try:
+    from .dict_index_helpers import AnyDict, AnyList
+except ImportError:
+    from dict_index_helpers import AnyDict, AnyList
 
 class AnyIndex(MutableMapping):
     def __init__(self, name: str, db_path: str):
@@ -26,6 +29,19 @@ class AnyIndex(MutableMapping):
         """)
         self._connection.commit()
     
+    def list_indexes(self):
+        sql = f"SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='{self.name}';"
+        result = self._connection.execute(sql).fetchall()
+        return [row[0] for row in result]
+
+
+    def create_number_index(self, key_order):
+        index_name = f"idx_{self.name}_{'_'.join(key_order)}"
+        keys = ", ".join([f"CAST(json_extract(value, '$.{'.'.join(key_order[:i+1])}') AS NUMERIC)" for i in range(len(key_order))])
+        sql = f"CREATE INDEX IF NOT EXISTS {index_name} ON {self.name} ({keys});"
+        print(sql)
+        self._connection.execute(sql)
+
     def close(self):
         if self._connection:
             self._connection.close()
@@ -38,9 +54,9 @@ class AnyIndex(MutableMapping):
             raise KeyError(key)
 
         if isinstance(value, dict):
-            return NestedDictProxy(self, key)
+            return AnyDict(self, key)
         elif isinstance(value, list):
-            return NestedListProxy(self, key)
+            return AnyList(self, key)
         return value
 
     def _get_nested_item(self, key: str, path: str) -> Any:
@@ -230,7 +246,16 @@ if __name__ == "__main__":
     # Test length
     print(f"Length: {len(d)}")
 
-    d["testAAA"] = {'wqDFOyquKhtMjfRtgYYcQJmXHkQpwcbAlJqLQqqUp': 'g', 'AGRzfpfhK': {'QnyPcxXWY': ['BqcMJuFH', 48], 'ksfD': 39, 'cenIanGoAZNBwEfzObaaSOagJaGoMSbAWCoZbJJHHbzbnOUOHS': [71, 49, 'LA', 1]}, 'XqOPDKbnFZ': {'aJYdC': 'Initial value'}}
+    test_dict = {'wqDFOyquKhtMjfRtgYYcQJmXHkQpwcbAlJqLQqqUp': 'g', 'AGRzfpfhK': {'QnyPcxXWY': ['BqcMJuFH', 48], 'ksfD': 39, 'cenIanGoAZNBwEfzObaaSOagJaGoMSbAWCoZbJJHHbzbnOUOHS': [71, 49, 'LA', 1]}, 'XqOPDKbnFZ': {'aJYdC': 'Initial value'}}
+    d["testAAA"] = test_dict
 
+    assert d["testAAA"].get_object() == test_dict
+
+    d["search_number_test_1"] = {"number": 1},
+    d["search_number_test_2"] = {"number": 2},
+    d["search_number_test_3_list"] = {"number": [3]},
+    d.create_number_index(["number"])
+
+    print(d.list_indexes())
 
     print("All tests passed!")
