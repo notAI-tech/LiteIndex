@@ -12,7 +12,7 @@ except ImportError:
     from dict_index_helpers import AnyDict, AnyList
 
 class AnyIndex(MutableMapping):
-    def __init__(self, name: str, db_path: str):
+    def __init__(self, name: str, db_path: str = ":memory:"):
         self.name = name
         self.db_path = db_path
         self._connection = sqlite3.connect(self.db_path, uri=True)
