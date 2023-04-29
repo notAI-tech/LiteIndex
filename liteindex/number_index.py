@@ -12,16 +12,20 @@ class NumberIndex:
     def _initialize_db(self):
         self._connection.execute("PRAGMA journal_mode=WAL")
         self._connection.execute("PRAGMA synchronous=NORMAL")
-        self._connection.execute(f"""
+        self._connection.execute(
+            f"""
             CREATE TABLE IF NOT EXISTS {self.name} (
                 key TEXT PRIMARY KEY,
                 value REAL
             );
-        """)
+        """
+        )
 
-        self._connection.execute(f"""
+        self._connection.execute(
+            f"""
             CREATE INDEX IF NOT EXISTS {self.name}_value_index ON {self.name}(value);
-        """)
+        """
+        )
 
         self._connection.commit()
 
@@ -36,10 +40,13 @@ class NumberIndex:
             raise ValueError("Value must be either float or int")
 
         cursor = self._connection.cursor()
-        cursor.execute(f"""
+        cursor.execute(
+            f"""
             INSERT OR REPLACE INTO {self.name} (key, value)
             VALUES (?, ?)
-        """, (key, value))
+        """,
+            (key, value),
+        )
         self._connection.commit()
 
     def __delitem__(self, key: str):
@@ -49,13 +56,13 @@ class NumberIndex:
 
     def __contains__(self, key: str) -> bool:
         return self[key] is not None
-    
+
     def __len__(self) -> int:
         cursor = self._connection.cursor()
         cursor.execute(f"SELECT COUNT(*) FROM {self.name}")
         return cursor.fetchone()[0]
 
-    def __iter__(self)  -> Iterable[str]:
+    def __iter__(self) -> Iterable[str]:
         return self.keys()
 
     def keys(self) -> Iterable[str]:
@@ -76,7 +83,9 @@ class NumberIndex:
         for row in cursor:
             yield row
 
-    def pop(self, key: str, default: Optional[Union[float, int]] = None) -> Union[float, int, None]:
+    def pop(
+        self, key: str, default: Optional[Union[float, int]] = None
+    ) -> Union[float, int, None]:
         value = self[key]
         if value is None:
             return default
@@ -100,10 +109,14 @@ class NumberIndex:
         cursor.execute(f"DELETE FROM {self.name}")
         self._connection.commit()
 
-    def get(self, key: str, default: Optional[Union[float, int]] = None) -> Union[float, int, None]:
+    def get(
+        self, key: str, default: Optional[Union[float, int]] = None
+    ) -> Union[float, int, None]:
         return self[key] if key in self else default
 
-    def setdefault(self, key: str, default: Optional[Union[float, int]] = None) -> Union[float, int, None]:
+    def setdefault(
+        self, key: str, default: Optional[Union[float, int]] = None
+    ) -> Union[float, int, None]:
         if key in self:
             return self[key]
         else:
@@ -115,10 +128,13 @@ class NumberIndex:
             raise ValueError("All values must be either float or int")
 
         cursor = self._connection.cursor()
-        cursor.executemany(f"""
+        cursor.executemany(
+            f"""
             INSERT OR REPLACE INTO {self.name} (key, value)
             VALUES (?, ?)
-        """, items.items())
+        """,
+            items.items(),
+        )
         self._connection.commit()
 
     def get_keys_for_value(self, value: Union[float, int]) -> Iterable[str]:
@@ -128,22 +144,26 @@ class NumberIndex:
 
     def top_n_items(self, n: int) -> Iterable[Tuple[str, Union[float, int]]]:
         cursor = self._connection.cursor()
-        cursor.execute(f"SELECT key, value FROM {self.name} ORDER BY value DESC LIMIT ?", (n,))
-        return cursor.fetchall()
-    
-    def least_n_items(self, n: int) -> Iterable[Tuple[str, Union[float, int]]]:
-        cursor = self._connection.cursor()
-        cursor.execute(f"SELECT key, value FROM {self.name} ORDER BY value ASC LIMIT ?", (n,))
+        cursor.execute(
+            f"SELECT key, value FROM {self.name} ORDER BY value DESC LIMIT ?", (n,)
+        )
         return cursor.fetchall()
 
-    def sorted_items(self, reverse: bool = False) -> Iterable[Tuple[str, Union[float, int]]]:
+    def least_n_items(self, n: int) -> Iterable[Tuple[str, Union[float, int]]]:
+        cursor = self._connection.cursor()
+        cursor.execute(
+            f"SELECT key, value FROM {self.name} ORDER BY value ASC LIMIT ?", (n,)
+        )
+        return cursor.fetchall()
+
+    def sorted_items(
+        self, reverse: bool = False
+    ) -> Iterable[Tuple[str, Union[float, int]]]:
         order = "DESC" if reverse else "ASC"
         cursor = self._connection.cursor()
         cursor.execute(f"SELECT key, value FROM {self.name} ORDER BY value {order}")
         for row in cursor:
             yield row
-
-
 
 
 if __name__ == "__main__":

@@ -6,10 +6,12 @@ import sqlite3
 import json
 from collections.abc import MutableMapping, MutableSequence
 from typing import Any, Optional
+
 try:
     from .dict_index_helpers import AnyDict, AnyList
 except ImportError:
     from dict_index_helpers import AnyDict, AnyList
+
 
 class AnyIndex(MutableMapping):
     def __init__(self, name: str, db_path: str = ":memory:"):
@@ -21,31 +23,36 @@ class AnyIndex(MutableMapping):
     def _initialize_db(self):
         self._connection.execute("PRAGMA journal_mode=WAL")
         self._connection.execute("PRAGMA synchronous=NORMAL")
-        self._connection.execute(f"""
+        self._connection.execute(
+            f"""
             CREATE TABLE IF NOT EXISTS {self.name} (
                 key TEXT PRIMARY KEY,
                 value JSON
             );
-        """)
+        """
+        )
         self._connection.commit()
-    
+
     def list_indexes(self):
         sql = f"SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='{self.name}';"
         result = self._connection.execute(sql).fetchall()
         return [row[0] for row in result]
 
-    def search(self, keys_order, value):
-        json_path = '$' + ''.join([f'.{key}' for key in keys_order])
+    def search_by_value(self, keys_order, value):
+        json_path = "$" + "".join([f".{key}" for key in keys_order])
         query = f"SELECT key, value FROM {self.name} WHERE json_extract(value, ?) = ?;"
-        
+
         cursor = self._connection.cursor()
         cursor.execute(query, (json_path, value))
 
         # Return iterator over cursor that yields key and JSON-loaded value pairs
-        return ((key, json.loads(json_value) if isinstance(json_value, str) else json_value) for key, json_value in cursor)
-    
-    def search_key(self, keys_order):
-        json_path = '$' + ''.join([f'.{key}' for key in keys_order])
+        return (
+            (key, json.loads(json_value) if isinstance(json_value, str) else json_value)
+            for key, json_value in cursor
+        )
+
+    def search_by_key(self, keys_order):
+        json_path = "$" + "".join([f".{key}" for key in keys_order])
         query = f"""
             SELECT key, value
             FROM {self.name}
@@ -56,11 +63,13 @@ class AnyIndex(MutableMapping):
         cursor.execute(query, (json_path,))
 
         # Return iterator over cursor that yields key and JSON-loaded value pairs
-        return ((key, json.loads(json_value) if isinstance(json_value, str) else json_value) for key, json_value in cursor)
-    
+        return (
+            (key, json.loads(json_value) if isinstance(json_value, str) else json_value)
+            for key, json_value in cursor
+        )
 
-    def search_in_list(self, keys_order, value):
-        json_path = '$' + ''.join([f'.{key}' for key in keys_order])
+    def search_value_in_list(self, keys_order, value):
+        json_path = "$" + "".join([f".{key}" for key in keys_order])
 
         query = f"""
             SELECT main.key, main.value
@@ -86,53 +95,43 @@ class AnyIndex(MutableMapping):
 
     def create_index(self, keys_order):
         index_name = "_".join(keys_order) + "_index"
-        json_path = '$' + ''.join([f'.{key}' for key in keys_order])
+        json_path = "$" + "".join([f".{key}" for key in keys_order])
         query = f"CREATE INDEX IF NOT EXISTS {index_name} ON {self.name} (json_extract(value, ?));"
         self._connection.execute(query, (json_path,))
         self._connection.commit()
 
-    def get_sorted(self, keys_order, reverse=False):
-        json_path = '$' + ''.join([f'.{key}' for key in keys_order])
-        order = 'DESC' if reverse else 'ASC'
+    def get_sorted_by_key(self, keys_order, reverse=False):
+        json_path = "$" + "".join([f".{key}" for key in keys_order])
+        order = "DESC" if reverse else "ASC"
         query = f"SELECT key, value FROM {self.name} ORDER BY json_extract(value, ?) {order};"
         cursor = self._connection.cursor()
         cursor.execute(query, (json_path,))
-        return ((key, json.loads(json_value) if isinstance(json_value, str) else json_value) for key, json_value in cursor)
+        return (
+            (key, json.loads(json_value) if isinstance(json_value, str) else json_value)
+            for key, json_value in cursor
+        )
 
-    def get_max(self, keys_order):
-        json_path = '$' + ''.join([f'.{key}' for key in keys_order])
+    def get_max_value(self, keys_order):
+        json_path = "$" + "".join([f".{key}" for key in keys_order])
         query = f"SELECT MAX(json_extract(value, ?)) FROM {self.name};"
         cursor = self._connection.cursor()
         cursor.execute(query, (json_path,))
         return cursor.fetchone()[0]
 
-    def get_min(self, keys_order):
-        json_path = '$' + ''.join([f'.{key}' for key in keys_order])
+    def get_min_value(self, keys_order):
+        json_path = "$" + "".join([f".{key}" for key in keys_order])
         query = f"SELECT MIN(json_extract(value, ?)) FROM {self.name};"
         cursor = self._connection.cursor()
         cursor.execute(query, (json_path,))
         return cursor.fetchone()[0]
 
-    def get_count(self, keys_order):
-        json_path = '$' + ''.join([f'.{key}' for key in keys_order])
-        query = f"SELECT COUNT(json_extract(value, ?)) FROM {self.name};"
+    def get_unique_values_and_counts(self, keys_order):
+        json_path = "$" + "".join([f".{key}" for key in keys_order])
+        query = f"SELECT json_extract(value, ?) as extracted_value, COUNT(*) as count FROM {self.name} GROUP BY extracted_value;"
         cursor = self._connection.cursor()
         cursor.execute(query, (json_path,))
-        return cursor.fetchone()[0]
 
-    def get_avg(self, keys_order):
-        json_path = '$' + ''.join([f'.{key}' for key in keys_order])
-        query = f"SELECT AVG(json_extract(value, ?)) FROM {self.name};"
-        cursor = self._connection.cursor()
-        cursor.execute(query, (json_path,))
-        return cursor.fetchone()[0]
-
-    def get_sum(self, keys_order):
-        json_path = '$' + ''.join([f'.{key}' for key in keys_order])
-        query = f"SELECT SUM(json_extract(value, ?)) FROM {self.name};"
-        cursor = self._connection.cursor()
-        cursor.execute(query, (json_path,))
-        return cursor.fetchone()[0]
+        return {row[0]: row[1] for row in cursor}
 
     def close(self):
         if self._connection:
@@ -140,8 +139,8 @@ class AnyIndex(MutableMapping):
             self._connection = None
 
     def __getitem__(self, key: str) -> Optional[Any]:
-        value = self._get_nested_item(key, '$')
-        
+        value = self._get_nested_item(key, "$")
+
         if value is None:
             raise KeyError(key)
 
@@ -153,7 +152,9 @@ class AnyIndex(MutableMapping):
 
     def _get_nested_item(self, key: str, path: str) -> Any:
         cursor = self._connection.cursor()
-        cursor.execute(f"SELECT json_extract(value, ?) FROM {self.name} WHERE key=?", (path, key))
+        cursor.execute(
+            f"SELECT json_extract(value, ?) FROM {self.name} WHERE key=?", (path, key)
+        )
         result = cursor.fetchone()
         if result:
             try:
@@ -166,7 +167,7 @@ class AnyIndex(MutableMapping):
         cursor = self._connection.cursor()
         cursor.execute(
             f"UPDATE {self.name} SET value=json_set(value, ?, json(?)) WHERE key=?",
-            (path, json.dumps(value), outer_key)
+            (path, json.dumps(value), outer_key),
         )
         self._connection.commit()
 
@@ -174,7 +175,7 @@ class AnyIndex(MutableMapping):
         cursor = self._connection.cursor()
         cursor.execute(
             f"UPDATE {self.name} SET value=json_remove(value, ?) WHERE key=?",
-            (path, outer_key)
+            (path, outer_key),
         )
         self._connection.commit()
 
@@ -182,13 +183,16 @@ class AnyIndex(MutableMapping):
         cursor = self._connection.cursor()
         cursor.execute(
             f"UPDATE {self.name} SET value=json_insert(value, ?, json(?)) WHERE key=?",
-            (path, json.dumps(value), outer_key)
+            (path, json.dumps(value), outer_key),
         )
         self._connection.commit()
 
     def __setitem__(self, key: str, value: Any):
         cursor = self._connection.cursor()
-        cursor.execute(f"INSERT OR REPLACE INTO {self.name}(key, value) VALUES (?, json(?))", (key, json.dumps(value)))
+        cursor.execute(
+            f"INSERT OR REPLACE INTO {self.name}(key, value) VALUES (?, json(?))",
+            (key, json.dumps(value)),
+        )
         self._connection.commit()
 
     def __delitem__(self, key: str):
@@ -198,7 +202,7 @@ class AnyIndex(MutableMapping):
 
     def __contains__(self, key: str) -> bool:
         return self[key] is not None
-    
+
     def __len__(self) -> int:
         cursor = self._connection.cursor()
         cursor.execute(f"SELECT COUNT(*) FROM {self.name}")
@@ -225,7 +229,9 @@ class AnyIndex(MutableMapping):
         for row in cursor:
             yield row
 
-    def pop(self, key: str, default: Optional[Union[float, int]] = None) -> Union[float, int, None]:
+    def pop(
+        self, key: str, default: Optional[Union[float, int]] = None
+    ) -> Union[float, int, None]:
         value = self[key]
         if value is None:
             return default
@@ -249,10 +255,14 @@ class AnyIndex(MutableMapping):
         cursor.execute(f"DELETE FROM {self.name}")
         self._connection.commit()
 
-    def get(self, key: str, default: Optional[Union[float, int]] = None) -> Union[float, int, None]:
+    def get(
+        self, key: str, default: Optional[Union[float, int]] = None
+    ) -> Union[float, int, None]:
         return self[key] if key in self else default
 
-    def setdefault(self, key: str, default: Optional[Union[float, int]] = None) -> Union[float, int, None]:
+    def setdefault(
+        self, key: str, default: Optional[Union[float, int]] = None
+    ) -> Union[float, int, None]:
         if key in self:
             return self[key]
         else:
@@ -260,39 +270,50 @@ class AnyIndex(MutableMapping):
             return default
 
     def update(self, items: dict):
-        if not all(isinstance(value, (float, int)) for value in items.values()):
-            raise ValueError("All values must be either float or int")
-
         cursor = self._connection.cursor()
-        cursor.executemany(f"""
+
+        # Convert the items dictionary into a list of tuples
+        # containing key-value pairs for use with executemany
+        item_list = [(key, json.dumps(value)) for key, value in items.items()]
+
+        # Execute the update statement with executemany
+        cursor.executemany(
+            f"""
             INSERT OR REPLACE INTO {self.name} (key, value)
-            VALUES (?, ?)
-        """, items.items())
+            VALUES (?, json(?))
+        """,
+            item_list,
+        )
+
         self._connection.commit()
 
-    def get_keys_for_value(self, value: Union[float, int]) -> Iterable[str]:
+    def find_keys_by_value(self, value: Union[float, int]) -> Iterable[str]:
         cursor = self._connection.cursor()
         cursor.execute(f"SELECT key FROM {self.name} WHERE value=?", (value,))
         return [row[0] for row in cursor.fetchall()]
 
-    def top_n_items(self, n: int) -> Iterable[Tuple[str, Union[float, int]]]:
+    def get_top_n_items(self, n: int) -> Iterable[Tuple[str, Union[float, int]]]:
         cursor = self._connection.cursor()
-        cursor.execute(f"SELECT key, value FROM {self.name} ORDER BY value DESC LIMIT ?", (n,))
-        return cursor.fetchall()
-    
-    def least_n_items(self, n: int) -> Iterable[Tuple[str, Union[float, int]]]:
-        cursor = self._connection.cursor()
-        cursor.execute(f"SELECT key, value FROM {self.name} ORDER BY value ASC LIMIT ?", (n,))
+        cursor.execute(
+            f"SELECT key, value FROM {self.name} ORDER BY value DESC LIMIT ?", (n,)
+        )
         return cursor.fetchall()
 
-    def sorted_items(self, reverse: bool = False) -> Iterable[Tuple[str, Union[float, int]]]:
+    def get_least_n_items(self, n: int) -> Iterable[Tuple[str, Union[float, int]]]:
+        cursor = self._connection.cursor()
+        cursor.execute(
+            f"SELECT key, value FROM {self.name} ORDER BY value ASC LIMIT ?", (n,)
+        )
+        return cursor.fetchall()
+
+    def get_sorted_items(
+        self, reverse: bool = False
+    ) -> Iterable[Tuple[str, Union[float, int]]]:
         order = "DESC" if reverse else "ASC"
         cursor = self._connection.cursor()
         cursor.execute(f"SELECT key, value FROM {self.name} ORDER BY value {order}")
         for row in cursor:
             yield row
-
-
 
 
 if __name__ == "__main__":
@@ -306,7 +327,10 @@ if __name__ == "__main__":
     assert d["key2"] == 42
 
     # Test a nested dictionary
-    d["key3"] = {"nested_key1": "nested_value1", "nested_key2": {"nested_key3": "nested_value2"}}
+    d["key3"] = {
+        "nested_key1": "nested_value1",
+        "nested_key2": {"nested_key3": "nested_value2"},
+    }
     assert d["key3"]["nested_key1"] == "nested_value1"
     assert d["key3"]["nested_key2"]["nested_key3"] == "nested_value2"
 
@@ -338,7 +362,15 @@ if __name__ == "__main__":
     # Test length
     print(f"Length: {len(d)}")
 
-    test_dict = {'wqDFOyquKhtMjfRtgYYcQJmXHkQpwcbAlJqLQqqUp': 'g', 'AGRzfpfhK': {'QnyPcxXWY': ['BqcMJuFH', 48], 'ksfD': 39, 'cenIanGoAZNBwEfzObaaSOagJaGoMSbAWCoZbJJHHbzbnOUOHS': [71, 49, 'LA', 1]}, 'XqOPDKbnFZ': {'aJYdC': 'Initial value'}}
+    test_dict = {
+        "wqDFOyquKhtMjfRtgYYcQJmXHkQpwcbAlJqLQqqUp": "g",
+        "AGRzfpfhK": {
+            "QnyPcxXWY": ["BqcMJuFH", 48],
+            "ksfD": 39,
+            "cenIanGoAZNBwEfzObaaSOagJaGoMSbAWCoZbJJHHbzbnOUOHS": [71, 49, "LA", 1],
+        },
+        "XqOPDKbnFZ": {"aJYdC": "Initial value"},
+    }
     d["testAAA"] = test_dict
 
     assert d["testAAA"].get_object() == test_dict
@@ -347,7 +379,7 @@ if __name__ == "__main__":
     d["search_number_test_2"] = {"number": 2}
     d["search_number_test_3_list"] = {"number": [3]}
 
-    print("search results:", d.search(["number"], 2))
+    print("search results:", d.search_by_value(["number"], 2))
 
     # d.create_number_index(["number"])
 

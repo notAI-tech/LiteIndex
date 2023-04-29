@@ -1,10 +1,11 @@
 from collections.abc import MutableMapping, MutableSequence
 
+
 class AnyDict:
     def __init__(self, anyindex_instance, key, path=None):
         self._anyindex_instance = anyindex_instance
         self._key = key
-        self._path = path if path else '$'
+        self._path = path if path else "$"
 
     def _path_with_key(self, key):
         if isinstance(key, int):
@@ -15,7 +16,7 @@ class AnyDict:
     def __getitem__(self, key):
         path = self._path_with_key(key)
         value = self._anyindex_instance._get_nested_item(self._key, path)
-        
+
         if isinstance(value, dict):
             return AnyDict(self._anyindex_instance, self._key, path)
         elif isinstance(value, list):
@@ -31,14 +32,14 @@ class AnyDict:
         if keys_dict is not None and isinstance(keys_dict, dict):
             for key in keys_dict.keys():
                 yield key
-    
+
     def keys(self):
         return self.__iter__()
-    
+
     def values(self):
         for key in self.keys():
             yield self[key]
-    
+
     def items(self):
         for key in self.keys():
             yield (key, self[key])
@@ -47,15 +48,15 @@ class AnyDict:
         exported_dict = {}
         for key, value in self.items():
             if isinstance(value, AnyDict):
-                print('---', value.get_object())
+                print("---", value.get_object())
                 exported_dict[key] = value.get_object()
             elif isinstance(value, AnyList):
-                print('===', value.get_object())
+                print("===", value.get_object())
                 exported_dict[key] = value.get_object()
             else:
                 exported_dict[key] = value
         return exported_dict
-    
+
     def get(self, key, default=None):
         try:
             return self[key]
@@ -97,14 +98,15 @@ class AnyDict:
             self[key] = default
             return default
 
+
 class AnyList(AnyDict, MutableSequence):
     def __len__(self):
         return len(self._anyindex_instance._get_nested_item(self._key, self._path))
-    
+
     def __iter__(self):
         for i in range(len(self)):
             yield self[i]
-    
+
     def get_object(self):
         return list(self)
 
@@ -115,7 +117,7 @@ class AnyList(AnyDict, MutableSequence):
     def insert(self, index, value):
         path = self._path_with_key(index)
         self._anyindex_instance._insert_nested_item(self._key, path, value)
-    
+
     def append(self, value):
         length = len(self)
         path = self._path_with_key(length)
