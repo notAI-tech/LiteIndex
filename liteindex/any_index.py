@@ -34,13 +34,105 @@ class AnyIndex(MutableMapping):
         result = self._connection.execute(sql).fetchall()
         return [row[0] for row in result]
 
+    def search(self, keys_order, value):
+        json_path = '$' + ''.join([f'.{key}' for key in keys_order])
+        query = f"SELECT key, value FROM {self.name} WHERE json_extract(value, ?) = ?;"
+        
+        cursor = self._connection.cursor()
+        cursor.execute(query, (json_path, value))
 
-    def create_number_index(self, key_order):
-        index_name = f"idx_{self.name}_{'_'.join(key_order)}"
-        keys = ", ".join([f"CAST(json_extract(value, '$.{'.'.join(key_order[:i+1])}') AS NUMERIC)" for i in range(len(key_order))])
-        sql = f"CREATE INDEX IF NOT EXISTS {index_name} ON {self.name} ({keys});"
-        print(sql)
-        self._connection.execute(sql)
+        # Return iterator over cursor that yields key and JSON-loaded value pairs
+        return ((key, json.loads(json_value) if isinstance(json_value, str) else json_value) for key, json_value in cursor)
+    
+    def search_key(self, keys_order):
+        json_path = '$' + ''.join([f'.{key}' for key in keys_order])
+        query = f"""
+            SELECT key, value
+            FROM {self.name}
+            WHERE json_extract(value, ?) IS NOT NULL;
+        """
+
+        cursor = self._connection.cursor()
+        cursor.execute(query, (json_path,))
+
+        # Return iterator over cursor that yields key and JSON-loaded value pairs
+        return ((key, json.loads(json_value) if isinstance(json_value, str) else json_value) for key, json_value in cursor)
+    
+
+    def search_in_list(self, keys_order, value):
+        json_path = '$' + ''.join([f'.{key}' for key in keys_order])
+
+        query = f"""
+            SELECT main.key, main.value
+            FROM {self.name} AS main
+            JOIN (
+                SELECT key, json_extract(value, ?) as array_value
+                FROM {self.name}
+                WHERE json_type(json_extract(value, ?)) = 'array'
+            ) AS derived
+            ON main.key = derived.key
+            WHERE EXISTS (
+                SELECT 1
+                FROM json_each(derived.array_value)
+                WHERE json_each.value = ?
+            );
+        """
+
+        cursor = self._connection.cursor()
+        cursor.execute(query, (json_path, json_path, value))
+
+        # Return iterator over cursor that yields key and JSON-loaded value pairs
+        return ((key, json.loads(json_value)) for key, json_value in cursor)
+
+    def create_index(self, keys_order):
+        index_name = "_".join(keys_order) + "_index"
+        json_path = '$' + ''.join([f'.{key}' for key in keys_order])
+        query = f"CREATE INDEX IF NOT EXISTS {index_name} ON {self.name} (json_extract(value, ?));"
+        self._connection.execute(query, (json_path,))
+        self._connection.commit()
+
+    def get_sorted(self, keys_order, reverse=False):
+        json_path = '$' + ''.join([f'.{key}' for key in keys_order])
+        order = 'DESC' if reverse else 'ASC'
+        query = f"SELECT key, value FROM {self.name} ORDER BY json_extract(value, ?) {order};"
+        cursor = self._connection.cursor()
+        cursor.execute(query, (json_path,))
+        return ((key, json.loads(json_value) if isinstance(json_value, str) else json_value) for key, json_value in cursor)
+
+    def get_max(self, keys_order):
+        json_path = '$' + ''.join([f'.{key}' for key in keys_order])
+        query = f"SELECT MAX(json_extract(value, ?)) FROM {self.name};"
+        cursor = self._connection.cursor()
+        cursor.execute(query, (json_path,))
+        return cursor.fetchone()[0]
+
+    def get_min(self, keys_order):
+        json_path = '$' + ''.join([f'.{key}' for key in keys_order])
+        query = f"SELECT MIN(json_extract(value, ?)) FROM {self.name};"
+        cursor = self._connection.cursor()
+        cursor.execute(query, (json_path,))
+        return cursor.fetchone()[0]
+
+    def get_count(self, keys_order):
+        json_path = '$' + ''.join([f'.{key}' for key in keys_order])
+        query = f"SELECT COUNT(json_extract(value, ?)) FROM {self.name};"
+        cursor = self._connection.cursor()
+        cursor.execute(query, (json_path,))
+        return cursor.fetchone()[0]
+
+    def get_avg(self, keys_order):
+        json_path = '$' + ''.join([f'.{key}' for key in keys_order])
+        query = f"SELECT AVG(json_extract(value, ?)) FROM {self.name};"
+        cursor = self._connection.cursor()
+        cursor.execute(query, (json_path,))
+        return cursor.fetchone()[0]
+
+    def get_sum(self, keys_order):
+        json_path = '$' + ''.join([f'.{key}' for key in keys_order])
+        query = f"SELECT SUM(json_extract(value, ?)) FROM {self.name};"
+        cursor = self._connection.cursor()
+        cursor.execute(query, (json_path,))
+        return cursor.fetchone()[0]
 
     def close(self):
         if self._connection:
@@ -204,7 +296,7 @@ class AnyIndex(MutableMapping):
 
 
 if __name__ == "__main__":
-    d = AnyIndex("test_db", "test.db")
+    d = AnyIndex("test_db_anyddd", "test.db")
 
     # Test simple key-value pairs
     d["key1"] = "value1"
@@ -251,11 +343,14 @@ if __name__ == "__main__":
 
     assert d["testAAA"].get_object() == test_dict
 
-    d["search_number_test_1"] = {"number": 1},
-    d["search_number_test_2"] = {"number": 2},
-    d["search_number_test_3_list"] = {"number": [3]},
-    d.create_number_index(["number"])
+    d["search_number_test_1"] = {"number": 1}
+    d["search_number_test_2"] = {"number": 2}
+    d["search_number_test_3_list"] = {"number": [3]}
 
-    print(d.list_indexes())
+    print("search results:", d.search(["number"], 2))
+
+    # d.create_number_index(["number"])
+
+    # print(d.list_indexes())
 
     print("All tests passed!")
