@@ -8,9 +8,11 @@ import diskcache
 import shutil
 
 import sys
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from liteindex import NumberIndex
+
 
 class TestNumberIndex(unittest.TestCase):
     def setUp(self):
@@ -22,8 +24,6 @@ class TestNumberIndex(unittest.TestCase):
         os.remove(self.db_path)
         os.remove(path=f"{self.db_path}-wal")
         os.remove(path=f"{self.db_path}-shm")
-
-
 
     def test_basic_operations(self):
         self.index["one"] = 1
@@ -50,7 +50,9 @@ class TestNumberIndex(unittest.TestCase):
         num_items = 10000
 
         # Test batch_set performance
-        items = {self.generate_random_key(): randint(1, num_items) for _ in range(num_items)}
+        items = {
+            self.generate_random_key(): randint(1, num_items) for _ in range(num_items)
+        }
 
         start_time = time()
         self.index.update(items)
@@ -58,13 +60,14 @@ class TestNumberIndex(unittest.TestCase):
         print(f"Batch set {num_items} items: {end_time - start_time:.2f} seconds")
 
         # Test single set performance
-        items = {self.generate_random_key(): randint(1, num_items) for _ in range(num_items)}
+        items = {
+            self.generate_random_key(): randint(1, num_items) for _ in range(num_items)
+        }
         start_time = time()
         for key, value in items.items():
             self.index[key] = value
         end_time = time()
         print(f"Set {num_items} items: {end_time - start_time:.2f} seconds")
-
 
         # Test retrieval performance
         start_time = time()
@@ -79,7 +82,9 @@ class TestNumberIndex(unittest.TestCase):
 
     def test_concurrency(self):
         num_items = 1000
-        items = {self.generate_random_key(): randint(1, num_items) for _ in range(num_items)}
+        items = {
+            self.generate_random_key(): randint(1, num_items) for _ in range(num_items)
+        }
 
         with ThreadPoolExecutor() as executor:
             for key, value in items.items():
@@ -95,20 +100,27 @@ class TestNumberIndex(unittest.TestCase):
 
         # Test set performance
         start_time = time()
-        items = {self.generate_random_key(): randint(1, num_items) for _ in range(num_items)}
+        items = {
+            self.generate_random_key(): randint(1, num_items) for _ in range(num_items)
+        }
         for key, value in items.items():
             cache[key] = value
         end_time = time()
-        print(f"Set {num_items} items in diskcache: {end_time - start_time:.2f} seconds")
+        print(
+            f"Set {num_items} items in diskcache: {end_time - start_time:.2f} seconds"
+        )
 
         # Test retrieval performance
         start_time = time()
         for key in items.keys():
             _ = cache[key]
         end_time = time()
-        print(f"Retrieve {num_items} items from diskcache: {end_time - start_time:.2f} seconds")
+        print(
+            f"Retrieve {num_items} items from diskcache: {end_time - start_time:.2f} seconds"
+        )
 
         shutil.rmtree(cache_path)
+
 
 if __name__ == "__main__":
     unittest.main()

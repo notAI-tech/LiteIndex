@@ -1,24 +1,41 @@
 import logging
+
 logging.basicConfig(level=logging.DEBUG)
 
 import random
 import string
 
+
 def random_string(length):
-    return ''.join(random.choices(string.ascii_letters, k=length))
+    return "".join(random.choices(string.ascii_letters, k=length))
+
 
 def random_key(max_string_length=50):
     return random_string(random.randint(1, max_string_length))
 
-def generate_random_dict_or_list(max_depth=5, max_list_length=10, max_dict_length=10, max_string_length=8, depth=1):
+
+def generate_random_dict_or_list(
+    max_depth=5, max_list_length=10, max_dict_length=10, max_string_length=8, depth=1
+):
     def random_value(depth):
         if depth > max_depth:
-            return random.choice([random.randint(0, 100), random_string(random.randint(1, max_string_length))])
+            return random.choice(
+                [
+                    random.randint(0, 100),
+                    random_string(random.randint(1, max_string_length)),
+                ]
+            )
 
         choice = random.choices(
             population=[0, 1, 2, 3, 4],
-            weights=[35, 35, 10 * (max_depth - depth), 10 * (max_depth - depth), 10 * (max_depth - depth)],
-            k=1
+            weights=[
+                35,
+                35,
+                10 * (max_depth - depth),
+                10 * (max_depth - depth),
+                10 * (max_depth - depth),
+            ],
+            k=1,
         )[0]
 
         if choice == 0:  # Integer
@@ -26,7 +43,10 @@ def generate_random_dict_or_list(max_depth=5, max_list_length=10, max_dict_lengt
         elif choice == 1:  # String
             return random_string(random.randint(1, max_string_length))
         elif choice == 2:  # List
-            return [random_value(depth + 1) for _ in range(random.randint(1, max_list_length))]
+            return [
+                random_value(depth + 1)
+                for _ in range(random.randint(1, max_list_length))
+            ]
         elif choice == 3:  # Dictionary
             result = {}
             for _ in range(random.randint(1, max_dict_length)):
@@ -34,12 +54,20 @@ def generate_random_dict_or_list(max_depth=5, max_list_length=10, max_dict_lengt
                 value = random_value(depth + 1)
                 result[key] = value
             return result
-        else: # Nested dictionary inside a list
-            return generate_random_dict_or_list(max_depth=max_depth, max_list_length=max_list_length, max_dict_length=max_dict_length, max_string_length=max_string_length, depth=depth + 1)
+        else:  # Nested dictionary inside a list
+            return generate_random_dict_or_list(
+                max_depth=max_depth,
+                max_list_length=max_list_length,
+                max_dict_length=max_dict_length,
+                max_string_length=max_string_length,
+                depth=depth + 1,
+            )
 
-    if random.random() < 0.5: # 50% chance of generating a list
-        return [random_value(depth + 1) for _ in range(random.randint(1, max_list_length))]
-    else: # 50% chance of generating a dictionary
+    if random.random() < 0.5:  # 50% chance of generating a list
+        return [
+            random_value(depth + 1) for _ in range(random.randint(1, max_list_length))
+        ]
+    else:  # 50% chance of generating a dictionary
         result = {}
         for _ in range(random.randint(1, max_dict_length)):
             key = random_key()
@@ -47,40 +75,42 @@ def generate_random_dict_or_list(max_depth=5, max_list_length=10, max_dict_lengt
             result[key] = value
         return result
 
+
 import unittest
 from random import choice
 from string import ascii_letters
 from time import time
 import os
 import sys
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from liteindex import AnyIndex
 
-class TestAnyIndex(unittest.TestCase):
 
+class TestAnyIndex(unittest.TestCase):
     def setUp(self):
-        self.index_name = 'test_any_index'
-        self.db_path = 'test_db'
+        self.index_name = "test_any_index"
+        self.db_path = "test_db"
         self.index = AnyIndex(self.index_name, self.db_path)
 
     def tearDown(self):
         del self.index
         os.remove(self.db_path)
-        
+
         if os.path.exists(f"{self.db_path}-wal"):
             os.remove(path=f"{self.db_path}-wal")
-        
+
         if os.path.exists(f"{self.db_path}-shm"):
             os.remove(path=f"{self.db_path}-shm")
 
     def random_key(self, length=10):
-        return ''.join(choice(ascii_letters) for _ in range(length))
+        return "".join(choice(ascii_letters) for _ in range(length))
 
     def test_set_and_get_item(self):
         test_dict = generate_random_dict_or_list()
         test_key = self.random_key()
-        
+
         self.index[test_key] = test_dict
         self.assertEqual(test_dict, self.index[test_key].get_object())
 
@@ -189,7 +219,5 @@ class TestAnyIndex(unittest.TestCase):
         self.assertLess(elapsed_time, 1, "Deleting items took too long")
 
 
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()
-
