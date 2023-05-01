@@ -13,12 +13,12 @@ from setuptools import find_packages, setup, Command
 
 # Package meta-data.
 NAME = "liteindex"
-DESCRIPTION = "Deploy DL/ ML inference pipelines with minimal extra code. "
+DESCRIPTION = "SQLite based queryable python indexes for dicts and lists"
 URL = "https://github.com/notAI-tech/liteindex"
 EMAIL = "praneeth@bpraneeth.com"
 AUTHOR = "BEDAPUDI PRANEETH"
 REQUIRES_PYTHON = ">=3.6.0"
-VERSION = "0.0.1.dev2"
+VERSION = "0.0.1.dev3"
 
 # What packages are required for this module to be executed?
 REQUIRED = [

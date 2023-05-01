@@ -78,20 +78,6 @@ class CustomDict(dict):
         self.parent = parent
         self.key = key
 
-    def __getitem__(self, item):
-        return super().__getitem__(item)
-
-    def __setitem__(self, item, value):
-        super().__setitem__(item, value)
-        self.parent[self.key] = self
-
-
-class CustomDict(dict):
-    def __init__(self, parent: MutableMapping, key: str, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.parent = parent
-        self.key = key
-
     def __getitem__(self, k):
         value = super().__getitem__(k)
         if isinstance(value, list):
@@ -202,6 +188,12 @@ class DefinedIndex(MutableMapping):
                     raise ValueError(
                         f"Invalid schema value for key {key}: {value}. List items must be strings or numbers."
                     )
+            
+            # if isinstance(value, dict):
+            #     if not all(isinstance(item, allowed_types) for item in value.keys()) and not all(isinstance(item, allowed_types) for item in value.values()):
+            #         raise ValueError(
+            #             f"Invalid schema value for key {key}: {value}. List items must be strings or numbers."
+            #         )
 
     def _create_table(self):
         columns = []
@@ -217,19 +209,19 @@ class DefinedIndex(MutableMapping):
     def _get_column_type(self, value: Any) -> str:
         if isinstance(value, (int, float)):
             return "NUMBER"
-        elif isinstance(value, (list, tuple)):
+        elif isinstance(value, (list, tuple)): #, dict)):
             return "JSON"
         else:
             return "TEXT"
 
     def _serialize_value(self, value: Any) -> Union[str, float, int]:
-        if isinstance(value, (list, tuple)):
+        if isinstance(value, (list, tuple)): #, dict)):
             return json.dumps(value)
         else:
             return value
 
     def _deserialize_value(self, value: Any, example: Any) -> Any:
-        if isinstance(example, (list, tuple)):
+        if isinstance(example, (list, tuple)): #, dict)):
             return json.loads(value)
         else:
             return value
@@ -303,6 +295,7 @@ class DefinedIndex(MutableMapping):
         )
 
     def _append_list_item(self, row_key: str, column_key: str, value: Any):
+        serialized_value = value
         self._connection.execute(
             f"UPDATE {self.name} SET {column_key} = json_insert({column_key}, '$[{len(self[row_key][column_key])}]', ?) WHERE id = ?",
             (serialized_value, row_key),
@@ -494,16 +487,35 @@ class DefinedIndex(MutableMapping):
 
 
 if __name__ == "__main__":
-    index = DefinedIndex("test", schema={"a": 1, "b": [1, 2], "c": "hello", "d": 1.5})
-    index["test"] = {"a": 1, "b": [1, 3]}  # Only setting keys 'a' and 'b'
-    index["test"]["c"] = "world"  # Setting a single key
-    index["test"]["b"][1] = 6788  # Setting a single list item
-    print(index["test"]["b"][1] == 6788, type(index["test"]["b"][1]))
-    print(index["test"]["b"][0], type(index["test"]["b"][0])), print(
-        index["test"]["b"][1], type(index["test"]["b"][1])
+    # Assuming we have the DefinedIndex class implementation
+    index = DefinedIndex(
+        "people",
+        schema={
+            "name": "",
+            "age": 0,
+            "interests": ["reading", "traveling"]
+        },
+        db_path=":memory:",
     )
-    print(index["test"], type(index["test"]["b"][1]), type(index["test"]["b"][0]))
 
-    index["test_2"] = {"a": 1, "b": [1, 3], "c": "lala", "d": 15}
-    res = next(index.filter_by_values_at_keys({"c": "lala"}))
-    print(type(res[1]), res[1])
+    # Add an item to the index
+    index["k1"] = {
+        "name": "Alice",
+        "age": 30,
+        "interests": ["reading", "traveling"]
+    }
+    # index now contains: {"k1": {"name": "Alice", "age": 30, "address": {"city": "New York", "country": "USA"}, "interests": ["reading", "traveling"]}}
+
+
+    # Update the age directly
+    index["k1"]["age"] = 31
+    # index now contains: {"k1": {"name": "Alice", "age": 31, "address": {"city": "New York", "country": "USA"}, "interests": ["reading", "traveling"]}}
+
+
+    # Append a new interest to the list directly
+    index["k1"]["interests"].append("cooking")
+    # index now contains: {"k1": {"name": "Alice", "age": 31, "address": {"city": "New York", "country": "USA"}, "interests": ["reading", "traveling", "cooking"]}}
+
+    print(index["k1"]["interests"])
+
+
