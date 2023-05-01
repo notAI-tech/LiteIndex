@@ -2,37 +2,46 @@ import sqlite3
 import tempfile
 import os
 from typing import Optional, Dict, Iterator
+from contextlib import contextmanager
+from threading import Lock
 
 class FileIndex:
     def __init__(self, name: str, db_path: str = ":memory:"):
         self.name = name
         self.db_path = db_path
-        self._connection = sqlite3.connect(self.db_path, uri=True)
+        self._connection = sqlite3.connect(self.db_path, uri=True, check_same_thread=False)
+        self._lock = Lock()
         self._create_table()
 
+    @contextmanager
+    def _locked_cursor(self):
+        with self._lock:
+            cursor = self._connection.cursor()
+            try:
+                yield cursor
+                self._connection.commit()
+            finally:
+                cursor.close()
+
     def _create_table(self):
-        cursor = self._connection.cursor()
-        cursor.execute(
-            f"CREATE TABLE IF NOT EXISTS {self.name} (id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT, file_name TEXT, value BLOB)"
-        )
-        cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_file_name ON {self.name} (file_name)")
-        self._connection.commit()
+        with self._locked_cursor() as cursor:
+            cursor.execute(
+                f"CREATE TABLE IF NOT EXISTS {self.name} (id INTEGER PRIMARY KEY AUTOINCREMENT, key TEXT, file_name TEXT, value BLOB)"
+            )
+            cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_file_name ON {self.name} (file_name)")
 
     def __setitem__(self, key: str, value: Dict[str, bytes]):
-        cursor = self._connection.cursor()
-
-        for file_name, file_content in value.items():
-            cursor.execute(
+        with self._locked_cursor() as cursor:
+            data = [(key, file_name, file_content) for file_name, file_content in value.items()]
+            cursor.executemany(
                 f"INSERT OR REPLACE INTO {self.name} (key, file_name, value) VALUES (?, ?, ?)",
-                (key, file_name, file_content),
+                data
             )
 
-        self._connection.commit()
-
     def __getitem__(self, key: str) -> Dict[str, bytes]:
-        cursor = self._connection.cursor()
-        cursor.execute(f"SELECT file_name, value FROM {self.name} WHERE key=?", (key,))
-        results = cursor.fetchall()
+        with self._locked_cursor() as cursor:
+            cursor.execute(f"SELECT file_name, value FROM {self.name} WHERE key=?", (key,))
+            results = cursor.fetchall()
 
         if not results:
             raise KeyError(f"Key '{key}' not found in {self.name}")
@@ -40,9 +49,9 @@ class FileIndex:
         return {file_name: file_data for file_name, file_data in results}
 
     def get_file_paths(self, key: str) -> Iterator[str]:
-        cursor = self._connection.cursor()
-        cursor.execute(f"SELECT file_name, value FROM {self.name} WHERE key=?", (key,))
-        results = cursor.fetchall()
+        with self._locked_cursor() as cursor:
+            cursor.execute(f"SELECT file_name, value FROM {self.name} WHERE key=?", (key,))
+            results = cursor.fetchall()
 
         if not results:
             raise KeyError(f"Key '{key}' not found in {self.name}")
@@ -56,10 +65,8 @@ class FileIndex:
             yield temp_path
 
     def __delitem__(self, key: str):
-        cursor = self._connection.cursor()
-        cursor.execute(f"DELETE FROM {self.name} WHERE key=?", (key,))
-        self._connection.commit()
-
+        with self._locked_cursor() as cursor:
+            cursor.execute(f"DELETE FROM {self.name} WHERE key=?", (key,))
 if __name__ == "__main__":
     # Initialize the FileIndex
     file_index = FileIndex("my_files")
