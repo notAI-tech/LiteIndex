@@ -1,10 +1,19 @@
-import sqlite3
-import pickle
 import json
-import datetime
+import sqlite3
+from typing import Union, Tuple, Optional, Any, Callable, Dict, Iterable, List
+
+import sqlite3
+import json
+from collections.abc import MutableMapping, MutableSequence
+from typing import Any, Optional
+
+try:
+    from .dict_index_helpers import AnyDict, AnyList
+except ImportError:
+    from dict_index_helpers import AnyDict, AnyList
 
 
-class AnyIndex:
+class AnyIndex(MutableMapping):
     def __init__(self, name: str, db_path: str = ":memory:"):
         self.name = name
         self.db_path = db_path
@@ -16,270 +25,364 @@ class AnyIndex:
         self._connection.execute("PRAGMA synchronous=NORMAL")
         self._connection.execute(
             f"""
-            CREATE TABLE IF NOT EXISTS {self.name}_json (
-                key TEXT NOT NULL PRIMARY KEY,
-                json_data JSON
-            )
-        """
-        )
-        self._connection.execute(
-            f"""
-            CREATE TABLE IF NOT EXISTS {self.name}_blob (
-                key TEXT NOT NULL,
-                blob_key_path TEXT NOT NULL,
-                blob_data BLOB,
-                PRIMARY KEY (key, blob_key_path)
-            )
+            CREATE TABLE IF NOT EXISTS {self.name} (
+                key TEXT PRIMARY KEY,
+                value JSON
+            );
         """
         )
         self._connection.commit()
 
-    def _store(self, key, json_data, blob_data):
-        self._connection.execute(
-            f"""
-            INSERT OR REPLACE INTO {self.name}_json (key, json_data)
-            VALUES (?, json(?))
-        """,
-            (key, json_data),
+    def list_indexes(self):
+        sql = f"SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='{self.name}';"
+        result = self._connection.execute(sql).fetchall()
+        return [row[0] for row in result]
+
+    def search_by_value(self, keys_order, value):
+        json_path = "$" + "".join([f".{key}" for key in keys_order])
+        query = f"SELECT key, value FROM {self.name} WHERE json_extract(value, ?) = ?;"
+
+        cursor = self._connection.cursor()
+        cursor.execute(query, (json_path, value))
+
+        # Return iterator over cursor that yields key and JSON-loaded value pairs
+        return (
+            (key, json.loads(json_value) if isinstance(json_value, str) else json_value)
+            for key, json_value in cursor
         )
-        self._connection.commit()
 
-        self._connection.execute(f"DELETE FROM {self.name}_blob WHERE key = ?", (key,))
-        for blob_key_path, blob_value in blob_data:
-            self._connection.execute(
-                f"""
-                INSERT INTO {self.name}_blob (key, blob_key_path, blob_data)
-                VALUES (?, ?, ?)
-            """,
-                (key, blob_key_path, sqlite3.Binary(blob_value)),
-            )
-        self._connection.commit()
+    def search_by_key(self, keys_order):
+        json_path = "$" + "".join([f".{key}" for key in keys_order])
+        query = f"""
+            SELECT key, value
+            FROM {self.name}
+            WHERE json_extract(value, ?) IS NOT NULL;
+        """
 
-    def _traverse(self, key, obj, key_path=()):
-        json_data = {}
-        blob_data = []
+        cursor = self._connection.cursor()
+        cursor.execute(query, (json_path,))
 
-        if isinstance(obj, (list, dict)):
-            # Store the object type information
-            obj_type = "list" if isinstance(obj, list) else "dict"
-            json_data[f"_type_{key_path}"] = obj_type
-
-            if isinstance(obj, list):
-                it = enumerate(obj)
-            else:
-                it = obj.items()
-
-            for sub_key, sub_value in it:
-                new_key_path = key_path + (sub_key,)
-                sub_json_data, sub_blob_data = self._traverse(
-                    key, sub_value, new_key_path
-                )
-                json_data.update(sub_json_data)
-                blob_data.extend(sub_blob_data)
-        else:
-            if isinstance(obj, (int, float, bool, str, type(None))):
-                json_data[key_path] = obj
-            elif isinstance(obj, datetime.datetime):
-                json_data[key_path] = obj.isoformat()
-            else:
-                pickled_value = pickle.dumps(obj)
-                blob_data.append((key_path, pickled_value))
-
-        return json_data, blob_data
-
-    def _unflatten(self, flat_data):
-        result = {}
-
-        for key_path_tuple, value in flat_data.items():
-            # Skip type information keys
-            if key_path_tuple and key_path_tuple[0] == "_type_":
-                continue
-
-            key_path = ".".join(str(k) for k in key_path_tuple)
-            keys = key_path.split(".")
-            current = result
-
-            for key in keys[:-1]:
-                key = int(key) if key.isdigit() else key
-                if key not in current:
-                    # If type information is available, use it to determine whether to create a list or a dictionary
-                    obj_type_key = ("_type_",) + tuple(str(k) for k in keys[:-1])
-                    if obj_type_key in flat_data and flat_data[obj_type_key] == "list":
-                        current[key] = []
-                    else:
-                        current[key] = {}
-                current = current[key]
-
-            last_key = keys[-1]
-            last_key = int(last_key) if last_key.isdigit() else last_key
-            current[last_key] = value
-
-        return result
-
-    def _get_value(self, key):
-        cursor = self._connection.execute(
-            f"SELECT json_data FROM {self.name}_json WHERE key = ?", (key,)
+        # Return iterator over cursor that yields key and JSON-loaded value pairs
+        return (
+            (key, json.loads(json_value) if isinstance(json_value, str) else json_value)
+            for key, json_value in cursor
         )
-        row = cursor.fetchone()
-        if row is not None:
-            json_data = row[0]
-            flat_json_value = json.loads(json_data)
-            flat_json_value = {tuple(eval(k)): v for k, v in flat_json_value.items()}
 
-            cursor = self._connection.execute(
-                f"SELECT blob_key_path, blob_data FROM {self.name}_blob WHERE key = ?",
-                (key,),
-            )
-            for row in cursor:
-                blob_key_path, blob_data = row
-                blob_value = pickle.loads(blob_data)
-                flat_json_value[eval(blob_key_path)] = blob_value
+    def search_value_in_list(self, keys_order, value):
+        json_path = "$" + "".join([f".{key}" for key in keys_order])
 
-            return self._unflatten(flat_json_value)
-        return None
+        query = f"""
+            SELECT main.key, main.value
+            FROM {self.name} AS main
+            JOIN (
+                SELECT key, json_extract(value, ?) as array_value
+                FROM {self.name}
+                WHERE json_type(json_extract(value, ?)) = 'array'
+            ) AS derived
+            ON main.key = derived.key
+            WHERE EXISTS (
+                SELECT 1
+                FROM json_each(derived.array_value)
+                WHERE json_each.value = ?
+            );
+        """
 
-    def __getitem__(self, key):
-        return self._get_value(key)
+        cursor = self._connection.cursor()
+        cursor.execute(query, (json_path, json_path, value))
 
-    def __setitem__(self, key, value):
-        json_data, blob_data = self._traverse(key, value)
-        json_data = {str(k): v for k, v in json_data.items()}
-        blob_data = [(str(k), v) for k, v in blob_data]
-        json_str = json.dumps(json_data)
-        self._store(key, json_str, blob_data)
+        # Return iterator over cursor that yields key and JSON-loaded value pairs
+        return ((key, json.loads(json_value)) for key, json_value in cursor)
 
-    def __delitem__(self, key):
-        self._delete(key)
-
-    def _delete(self, key):
-        self._connection.execute(f"DELETE FROM {self.name}_json WHERE key = ?", (key,))
-        self._connection.execute(f"DELETE FROM {self.name}_blob WHERE key = ?", (key,))
+    def create_index(self, keys_order):
+        index_name = "_".join(keys_order) + "_index"
+        json_path = "$" + "".join([f".{key}" for key in keys_order])
+        query = f"CREATE INDEX IF NOT EXISTS {index_name} ON {self.name} (json_extract(value, ?));"
+        self._connection.execute(query, (json_path,))
         self._connection.commit()
 
-    def __iter__(self):
-        cursor = self._connection.execute(f"SELECT key FROM {self.name}_json")
-        return (row[0] for row in cursor)
+    def get_sorted_by_key(self, keys_order, reverse=False):
+        json_path = "$" + "".join([f".{key}" for key in keys_order])
+        order = "DESC" if reverse else "ASC"
+        query = f"SELECT key, value FROM {self.name} ORDER BY json_extract(value, ?) {order};"
+        cursor = self._connection.cursor()
+        cursor.execute(query, (json_path,))
+        return (
+            (key, json.loads(json_value) if isinstance(json_value, str) else json_value)
+            for key, json_value in cursor
+        )
 
-    def __len__(self):
-        cursor = self._connection.execute(f"SELECT COUNT(*) FROM {self.name}_json")
+    def get_max_value(self, keys_order):
+        json_path = "$" + "".join([f".{key}" for key in keys_order])
+        query = f"SELECT MAX(json_extract(value, ?)) FROM {self.name};"
+        cursor = self._connection.cursor()
+        cursor.execute(query, (json_path,))
         return cursor.fetchone()[0]
 
-    def keys(self):
-        return iter(self)
+    def get_min_value(self, keys_order):
+        json_path = "$" + "".join([f".{key}" for key in keys_order])
+        query = f"SELECT MIN(json_extract(value, ?)) FROM {self.name};"
+        cursor = self._connection.cursor()
+        cursor.execute(query, (json_path,))
+        return cursor.fetchone()[0]
 
-    def values(self):
-        for key in self.keys():
-            yield self[key]
+    def get_unique_values_and_counts(self, keys_order):
+        json_path = "$" + "".join([f".{key}" for key in keys_order])
+        query = f"SELECT json_extract(value, ?) as extracted_value, COUNT(*) as count FROM {self.name} GROUP BY extracted_value;"
+        cursor = self._connection.cursor()
+        cursor.execute(query, (json_path,))
 
-    def items(self):
-        for key in self.keys():
-            yield (key, self[key])
+        return {row[0]: row[1] for row in cursor}
 
-    def update(self, other):
-        json_data = {}
-        blob_data = {}
+    def close(self):
+        if self._connection:
+            self._connection.close()
+            self._connection = None
 
-        if isinstance(other, (dict, MutableMapping)):
-            for key, value in other.items():
-                sub_json_data, sub_blob_data = self._traverse(repr(key), value)
-                json_data.update(sub_json_data)
-                blob_data.update({key: value for key, value in sub_blob_data})
-        else:
-            for key, value in other:
-                sub_json_data, sub_blob_data = self._traverse(repr(key), value)
-                json_data.update(sub_json_data)
-                blob_data.update({key: value for key, value in sub_blob_data})
+    def __getitem__(self, key: str) -> Optional[Any]:
+        value = self._get_nested_item(key, "$")
 
-        # Combine JSON data and blob data into a single list of tuples
-        combined_data = [
-            (key, json.dumps(json_data.get(key)), blob_data.get(key))
-            for key in set(json_data) | set(blob_data)
-        ]
+        if value is None:
+            raise KeyError(key)
 
-        # Store combined data in a single call
-        self._connection.executemany(
-            f"""
-            INSERT OR REPLACE INTO {self.name} (key_path, json_data, blob)
-            VALUES (?, json(?), ?)
-        """,
-            combined_data,
+        if isinstance(value, dict):
+            return AnyDict(self, key)
+        elif isinstance(value, list):
+            return AnyList(self, key)
+        return value
+
+    def _get_nested_item(self, key: str, path: str) -> Any:
+        cursor = self._connection.cursor()
+        cursor.execute(
+            f"SELECT json_extract(value, ?) FROM {self.name} WHERE key=?", (path, key)
+        )
+        result = cursor.fetchone()
+        if result:
+            try:
+                return json.loads(result[0])
+            except:
+                return result[0]
+        return None
+
+    def _set_nested_item(self, outer_key, path, value):
+        cursor = self._connection.cursor()
+        cursor.execute(
+            f"UPDATE {self.name} SET value=json_set(value, ?, json(?)) WHERE key=?",
+            (path, json.dumps(value), outer_key),
         )
         self._connection.commit()
 
-    def clear(self):
-        self._connection.execute(f"DELETE FROM {self.name}")
+    def _remove_nested_item(self, outer_key, path):
+        cursor = self._connection.cursor()
+        cursor.execute(
+            f"UPDATE {self.name} SET value=json_remove(value, ?) WHERE key=?",
+            (path, outer_key),
+        )
         self._connection.commit()
 
-    def pop(self, key, default=None):
-        try:
-            value = self[key]
+    def _insert_nested_item(self, outer_key, path, value):
+        cursor = self._connection.cursor()
+        cursor.execute(
+            f"UPDATE {self.name} SET value=json_insert(value, ?, json(?)) WHERE key=?",
+            (path, json.dumps(value), outer_key),
+        )
+        self._connection.commit()
+
+    def __setitem__(self, key: str, value: Any):
+        cursor = self._connection.cursor()
+        cursor.execute(
+            f"INSERT OR REPLACE INTO {self.name}(key, value) VALUES (?, json(?))",
+            (key, json.dumps(value)),
+        )
+        self._connection.commit()
+
+    def __delitem__(self, key: str):
+        cursor = self._connection.cursor()
+        cursor.execute(f"DELETE FROM {self.name} WHERE key=?", (key,))
+        self._connection.commit()
+
+    def __contains__(self, key: str) -> bool:
+        return self[key] is not None
+
+    def __len__(self) -> int:
+        cursor = self._connection.cursor()
+        cursor.execute(f"SELECT COUNT(*) FROM {self.name}")
+        return cursor.fetchone()[0]
+
+    def __iter__(self) -> Iterable[str]:
+        return self.keys()
+
+    def keys(self) -> Iterable[str]:
+        cursor = self._connection.cursor()
+        cursor.execute(f"SELECT key FROM {self.name}")
+        for row in cursor:
+            yield row[0]
+
+    def values(self) -> Iterable[Union[float, int]]:
+        cursor = self._connection.cursor()
+        cursor.execute(f"SELECT value FROM {self.name}")
+        for row in cursor:
+            yield row[0]
+
+    def items(self) -> Iterable[Tuple[str, Union[float, int]]]:
+        cursor = self._connection.cursor()
+        cursor.execute(f"SELECT key, value FROM {self.name}")
+        for row in cursor:
+            yield row
+
+    def pop(
+        self, key: str, default: Optional[Union[float, int]] = None
+    ) -> Union[float, int, None]:
+        value = self[key]
+        if value is None:
+            return default
+        else:
             del self[key]
             return value
-        except KeyError:
-            if default is not None:
-                return default
-            else:
-                raise KeyError(key)
 
-    def popitem(self):
-        try:
-            key = next(iter(self))
-            value = self[key]
-            del self[key]
-            return (key, value)
-        except StopIteration:
+    def popitem(self) -> Tuple[str, Union[float, int]]:
+        cursor = self._connection.cursor()
+        cursor.execute(f"SELECT key, value FROM {self.name} LIMIT 1")
+        item = cursor.fetchone()
+        if item is None:
             raise KeyError("popitem(): dictionary is empty")
+        else:
+            key, value = item
+            del self[key]
+            return key, value
 
-    def get(self, key, default=None):
-        try:
-            return self[key]
-        except KeyError:
-            return default
+    def clear(self):
+        cursor = self._connection.cursor()
+        cursor.execute(f"DELETE FROM {self.name}")
+        self._connection.commit()
 
-    def setdefault(self, key, default=None):
-        try:
+    def get(
+        self, key: str, default: Optional[Union[float, int]] = None
+    ) -> Union[float, int, None]:
+        return self[key] if key in self else default
+
+    def setdefault(
+        self, key: str, default: Optional[Union[float, int]] = None
+    ) -> Union[float, int, None]:
+        if key in self:
             return self[key]
-        except KeyError:
+        else:
             self[key] = default
             return default
 
-    def copy(self):
-        return self
+    def update(self, items: dict):
+        cursor = self._connection.cursor()
+
+        # Convert the items dictionary into a list of tuples
+        # containing key-value pairs for use with executemany
+        item_list = [(key, json.dumps(value)) for key, value in items.items()]
+
+        # Execute the update statement with executemany
+        cursor.executemany(
+            f"""
+            INSERT OR REPLACE INTO {self.name} (key, value)
+            VALUES (?, json(?))
+        """,
+            item_list,
+        )
+
+        self._connection.commit()
+
+    def find_keys_by_value(self, value: Union[float, int]) -> Iterable[str]:
+        cursor = self._connection.cursor()
+        cursor.execute(f"SELECT key FROM {self.name} WHERE value=?", (value,))
+        return [row[0] for row in cursor.fetchall()]
+
+    def get_top_n_items(self, n: int) -> Iterable[Tuple[str, Union[float, int]]]:
+        cursor = self._connection.cursor()
+        cursor.execute(
+            f"SELECT key, value FROM {self.name} ORDER BY value DESC LIMIT ?", (n,)
+        )
+        return cursor.fetchall()
+
+    def get_least_n_items(self, n: int) -> Iterable[Tuple[str, Union[float, int]]]:
+        cursor = self._connection.cursor()
+        cursor.execute(
+            f"SELECT key, value FROM {self.name} ORDER BY value ASC LIMIT ?", (n,)
+        )
+        return cursor.fetchall()
+
+    def get_sorted_items(
+        self, reverse: bool = False
+    ) -> Iterable[Tuple[str, Union[float, int]]]:
+        order = "DESC" if reverse else "ASC"
+        cursor = self._connection.cursor()
+        cursor.execute(f"SELECT key, value FROM {self.name} ORDER BY value {order}")
+        for row in cursor:
+            yield row
 
 
 if __name__ == "__main__":
-    import numpy as np
+    d = AnyIndex("test_db_anyddd", "test.db")
 
-    any_index = AnyIndex(name="test")
-    any_index["a"] = 1
-    any_index["b"] = 2.0
-    any_index["c"] = True
-    any_index["d"] = datetime.datetime.now()
-    any_index["e"] = "Hello"
-    any_index["f"] = b"World"
-    any_index["g"] = {"a": 1, "b": 2}
-    any_index["h"] = [1, 2, 3]
-    any_index["i"] = {"a": [1, 2, 3], "b": {"c": 4, "d": 5}}
-    any_index["j"] = [1, None, 2, {"a": 3, "b": 4}]
-    any_index["k"] = {"a": 1, "b": [2, 3, {"c": 4, "d": 5}]}
-    any_index["l"] = {"a": 1, "b": [2, 3, {"c": 4, "d": 5, "e": {"f": 6, "g": 7}}]}
-    any_index["m"] = {
-        "a": 1,
-        "b": [2, 3, {"c": 4, "d": 5, "e": {"f": 6, "g": 7, "h": [8, 9, 10]}}],
+    # Test simple key-value pairs
+    d["key1"] = "value1"
+    assert d["key1"] == "value1"
+
+    d["key2"] = 42
+    assert d["key2"] == 42
+
+    # Test a nested dictionary
+    d["key3"] = {
+        "nested_key1": "nested_value1",
+        "nested_key2": {"nested_key3": "nested_value2"},
     }
-    any_index["n"] = np.array([1, 2, 3])
+    assert d["key3"]["nested_key1"] == "nested_value1"
+    assert d["key3"]["nested_key2"]["nested_key3"] == "nested_value2"
 
-    print(any_index["a"])
-    print(any_index["b"])
-    print(any_index["c"])
-    print(any_index["d"])
-    print(any_index["e"])
-    print(any_index["f"])
-    print(any_index["g"])
-    print(any_index["h"])
-    print(any_index["i"])
-    print("--", any_index["j"])
-    print(any_index["k"])
-    print(any_index["l"])
-    print(any_index["m"])
-    print(any_index["n"])
+    # Test updating a nested dictionary
+    d["key3"]["nested_key2"]["nested_key3"] = "updated_nested_value2"
+    assert d["key3"]["nested_key2"]["nested_key3"] == "updated_nested_value2"
+
+    # Test a nested list
+    d["key4"] = [1, 2, 3, ["nested_list_item1", "nested_list_item2"]]
+    assert d["key4"][0] == 1
+    assert d["key4"][3][1] == "nested_list_item2"
+
+    # Test updating a nested list
+    d["key4"][3][1] = "updated_nested_list_item2"
+    assert d["key4"][3][1] == "updated_nested_list_item2"
+
+    # Test deleting a key
+    del d["key1"]
+    try:
+        _ = d["key1"]
+    except KeyError:
+        print("key1 successfully deleted")
+
+    # Test iteration
+    print("Iterating over keys:")
+    for key in d:
+        print(key)
+
+    # Test length
+    print(f"Length: {len(d)}")
+
+    test_dict = {
+        "wqDFOyquKhtMjfRtgYYcQJmXHkQpwcbAlJqLQqqUp": "g",
+        "AGRzfpfhK": {
+            "QnyPcxXWY": ["BqcMJuFH", 48],
+            "ksfD": 39,
+            "cenIanGoAZNBwEfzObaaSOagJaGoMSbAWCoZbJJHHbzbnOUOHS": [71, 49, "LA", 1],
+        },
+        "XqOPDKbnFZ": {"aJYdC": "Initial value"},
+    }
+    d["testAAA"] = test_dict
+
+    assert d["testAAA"].get_object() == test_dict
+
+    d["search_number_test_1"] = {"number": 1}
+    d["search_number_test_2"] = {"number": 2}
+    d["search_number_test_3_list"] = {"number": [3]}
+
+    print("search results:", d.search_by_value(["number"], 2))
+
+    # d.create_number_index(["number"])
+
+    # print(d.list_indexes())
+
+    print("All tests passed!")
