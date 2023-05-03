@@ -39,7 +39,7 @@ class FileIndex:
             )
 
     def __getitem__(self, key: str) -> Dict[str, bytes]:
-        with self._locked_cursor() as cursor:
+        with self._connection.cursor() as cursor:
             cursor.execute(f"SELECT file_name, value FROM {self.name} WHERE key=?", (key,))
             results = cursor.fetchall()
 
@@ -49,20 +49,14 @@ class FileIndex:
         return {file_name: file_data for file_name, file_data in results}
 
     def get_file_paths(self, key: str) -> Iterator[str]:
-        with self._locked_cursor() as cursor:
+        with self._connection.cursor() as cursor:
+            temp_dir = tempfile.mkdtemp()
             cursor.execute(f"SELECT file_name, value FROM {self.name} WHERE key=?", (key,))
-            results = cursor.fetchall()
-
-        if not results:
-            raise KeyError(f"Key '{key}' not found in {self.name}")
-
-        temp_dir = tempfile.mkdtemp()
-
-        for file_name, file_data in results:
-            temp_path = os.path.join(temp_dir, file_name)
-            with open(temp_path, "wb") as temp_file:
-                temp_file.write(file_data)
-            yield temp_path
+            for file_name, file_data in cursor:
+                temp_path = os.path.join(temp_dir, file_name)
+                with open(temp_path, "wb") as temp_file:
+                    temp_file.write(file_data)
+                yield temp_path
 
     def __delitem__(self, key: str):
         with self._locked_cursor() as cursor:

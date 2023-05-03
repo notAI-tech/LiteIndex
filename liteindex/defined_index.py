@@ -3,7 +3,6 @@ import sqlite3
 from typing import Any, Union, List, Iterator, Optional, Dict
 from collections.abc import MutableMapping
 
-
 class CustomList(list):
     def __init__(
         self, parent: MutableMapping, parent_key: str, key: str, *args, **kwargs
@@ -188,12 +187,6 @@ class DefinedIndex(MutableMapping):
                     raise ValueError(
                         f"Invalid schema value for key {key}: {value}. List items must be strings or numbers."
                     )
-            
-            # if isinstance(value, dict):
-            #     if not all(isinstance(item, allowed_types) for item in value.keys()) and not all(isinstance(item, allowed_types) for item in value.values()):
-            #         raise ValueError(
-            #             f"Invalid schema value for key {key}: {value}. List items must be strings or numbers."
-            #         )
 
     def _create_table(self):
         columns = []
@@ -209,19 +202,19 @@ class DefinedIndex(MutableMapping):
     def _get_column_type(self, value: Any) -> str:
         if isinstance(value, (int, float)):
             return "NUMBER"
-        elif isinstance(value, (list, tuple)): #, dict)):
+        elif isinstance(value, (list, tuple)):
             return "JSON"
         else:
             return "TEXT"
 
     def _serialize_value(self, value: Any) -> Union[str, float, int]:
-        if isinstance(value, (list, tuple)): #, dict)):
+        if isinstance(value, (list, tuple)):
             return json.dumps(value)
         else:
             return value
 
     def _deserialize_value(self, value: Any, example: Any) -> Any:
-        if isinstance(example, (list, tuple)): #, dict)):
+        if isinstance(example, (list, tuple)):
             return json.loads(value)
         else:
             return value
