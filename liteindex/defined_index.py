@@ -2,7 +2,8 @@ import json
 import sqlite3
 from typing import Any, Union, List, Iterator, Optional, Dict, Tuple
 
-class DefinedIndex():
+
+class DefinedIndex:
     def __init__(
         self, name: str, schema: Optional[dict] = None, db_path: str = ":memory:"
     ):
@@ -22,15 +23,42 @@ class DefinedIndex():
         self._connection.execute("PRAGMA synchronous=NORMAL")
         self._create_table()
 
+    def _load_schema_from_table(self):
+        cursor = self._connection.cursor()
+        cursor.execute(
+            f"SELECT sql FROM sqlite_master WHERE type='table' AND name='{self.name}'"
+        )
+        result = cursor.fetchone()
+        if result is None:
+            raise ValueError(f"Table {self.name} does not exist in the database")
+        sql = result["sql"]
+        column_defs = re.findall(r"\((.*)\)", sql)[0].split(",")
+        schema = {}
+        for column_def in column_defs:
+            column_name = column_def.split()[0]
+            column_type = column_def.split()[1]
+            schema[column_name] = self._get_value_from_column_type(column_type)
+        return schema
+
+    def _get_value_from_column_type(self, column_type: str):
+        if column_type.startswith("TEXT"):
+            return ""
+        elif column_type == "NUMBER":
+            return 0
+        elif column_type == "JSON":
+            return {}
+        elif column_type == "INTEGER":
+            return False
+        else:
+            raise ValueError(f"Unsupported column type: {column_type}")
+
     def _validate_schema(self):
         for key, value in self.schema.items():
             if not isinstance(key, str):
+                raise ValueError(f"Invalid schema key: {key}. Keys must be strings.")
+            if not isinstance(value, (str, int, float, list, dict, bool)):
                 raise ValueError(
-                    f"Invalid schema key: {key}. Keys must be strings."
-                )
-            if not isinstance(value, (str, int, float, list, dict)):
-                raise ValueError(
-                    f"Invalid schema value for key {key}: {value}. Values must be strings, numbers, or plain lists or dicts."
+                    f"Invalid schema value for key {key}: {value}. Values must be strings, numbers, booleans, or plain lists or dicts."
                 )
 
     def _create_table(self):
@@ -45,14 +73,18 @@ class DefinedIndex():
         self._connection.commit()
 
     def _get_column_type(self, value: Any) -> str:
-        if isinstance(value, (int, float)):
+        if isinstance(value, bool):
+            return "INTEGER"  # SQLite does not have a native BOOLEAN type, but INTEGER can store 0 (False) or 1 (True)
+        elif isinstance(value, (int, float)):
             return "NUMBER"
         elif isinstance(value, (list, dict)):
             return "JSON"
         else:
             return "TEXT"
 
-    def _process_query_conditions(self, query: Dict, prefix: Optional[List[str]] = None) -> Tuple[List[str], List]:
+    def _process_query_conditions(
+        self, query: Dict, prefix: Optional[List[str]] = None
+    ) -> Tuple[List[str], List]:
         where_conditions = []
         params = []
 
@@ -63,23 +95,31 @@ class DefinedIndex():
             new_prefix = prefix + [key]
 
             if isinstance(value, dict):
-                nested_conditions, nested_params = self._process_query_conditions(value, prefix=new_prefix)
+                nested_conditions, nested_params = self._process_query_conditions(
+                    value, prefix=new_prefix
+                )
                 where_conditions.extend(nested_conditions)
                 params.extend(nested_params)
             elif isinstance(value, (int, float, str)):
                 if not prefix:
                     where_conditions.append(f"{key} = ?")
                 else:
-                    where_conditions.append(f"json_extract({new_prefix[0]}, '$.{'.'.join(new_prefix[1:])}') = ?")
+                    where_conditions.append(
+                        f"json_extract({new_prefix[0]}, '$.{'.'.join(new_prefix[1:])}') = ?"
+                    )
                 params.append(value)
             elif isinstance(value, (tuple, list)):
                 if isinstance(value[0], (int, float, str)):
-                    where_conditions.append(f"json_extract({new_prefix[0]}, '$.{'.'.join(new_prefix[1:])}') IN ({','.join(['?' for _ in value])})")
+                    where_conditions.append(
+                        f"json_extract({new_prefix[0]}, '$.{'.'.join(new_prefix[1:])}') IN ({','.join(['?' for _ in value])})"
+                    )
                     params.extend(value)
                 elif isinstance(value, tuple):
                     operator, condition_value = value
                     if operator in ("<", ">", "<=", ">=", "=", "<>"):
-                        where_conditions.append(f"json_extract({new_prefix[0]}, '$.{'.'.join(new_prefix[1:])}') {operator} ?")
+                        where_conditions.append(
+                            f"json_extract({new_prefix[0]}, '$.{'.'.join(new_prefix[1:])}') {operator} ?"
+                        )
                         params.append(condition_value)
                     else:
                         raise ValueError(f"Invalid operator: {operator}")
@@ -88,16 +128,15 @@ class DefinedIndex():
 
         return where_conditions, params
 
-        
     def set(self, id: str, item: Dict[str, Any]) -> None:
         """Insert or update an item in the index."""
-        item['id'] = id
+        item["id"] = id
         keys = []
         values = []
         placeholders = []
         for key, value in item.items():
             keys.append(key)
-            
+
             if isinstance(value, (list, dict)):
                 value = json.dumps(value)
 
@@ -106,7 +145,7 @@ class DefinedIndex():
         keys_str = ", ".join(keys)
         placeholders_str = ", ".join(placeholders)
         update_str = ", ".join([f"{key} = ?" for key in keys])
-        
+
         query = f"""
         INSERT INTO {self.name} ({keys_str})
         VALUES ({placeholders_str})
@@ -137,7 +176,7 @@ class DefinedIndex():
             else:
                 return None
         else:
-            key_path = '.'.join(keys)
+            key_path = ".".join(keys)
             query = f"SELECT json_extract({keys[0]}, ?) FROM {self.name} WHERE id = ?"
             cursor = self._connection.execute(query, (key_path, id))
             row = cursor.fetchone()
@@ -145,14 +184,14 @@ class DefinedIndex():
                 return row[0] if row[0] is not None else None
             else:
                 return None
-                
+
     def search(
         self,
         query: Optional[Dict],
         sort_by: Optional[str] = None,
-        reversed_sort: Optional[bool] = False
+        reversed_sort: Optional[bool] = False,
     ) -> List[Dict]:
-        
+
         if query:
             where_conditions, params = self._process_query_conditions(query)
             where_clause = " AND ".join(where_conditions)
@@ -160,16 +199,16 @@ class DefinedIndex():
         else:
             query = f"SELECT * FROM {self.name}"
             params = []
-        
+
         if sort_by:
             query += f" ORDER BY {sort_by}"
             if reversed_sort:
                 query += " DESC"
-        
+
         cursor = self._connection.execute(query, params)
         for row in cursor:
             yield self.__row_to_id_and_item(row)
-    
+
     def count(self, query: Optional[Dict] = None) -> int:
         if query:
             where_conditions, params = self._process_query_conditions(query)
@@ -203,17 +242,13 @@ class DefinedIndex():
         cursor = self._connection.execute(query, params)
         return cursor.fetchone()[0]
 
+
 if __name__ == "__main__":
     # Define the schema for the index
     schema = {
         "name": "",
         "age": 0,
-        "address": {
-            "street": "",
-            "city": "",
-            "state": "",
-            "country": ""
-        }
+        "address": {"street": "", "city": "", "state": "", "country": ""},
     }
 
     # Create a new index with the specified schema
@@ -226,8 +261,8 @@ if __name__ == "__main__":
             "street": "123 Main St",
             "city": "New York",
             "state": "NY",
-            "country": "USA"
-        }
+            "country": "USA",
+        },
     }
     index.set("1", item)
 
@@ -239,7 +274,7 @@ if __name__ == "__main__":
     query = {"address": {"state": "NY"}}
     results = index.search(query)
     for result in results:
-        print('--', result)
+        print("--", result)
 
     # Count the number of items matching a query
     count = index.count(query)
@@ -250,4 +285,3 @@ if __name__ == "__main__":
     average_age = index.average("age", query)
     print("Total age:", total_age)
     print("Average age:", average_age)
-
