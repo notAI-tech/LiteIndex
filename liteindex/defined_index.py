@@ -125,68 +125,110 @@ class DefinedIndex:
 
         return where_conditions, params
 
-    def set(self, id: str, item: Dict[str, Any]) -> None:
-        """Insert or update an item in the index."""
-        item["id"] = id
-        keys = []
-        values = []
-        placeholders = []
-        for key, value in item.items():
-            keys.append(key)
+    def set(self, key: Union[str, Tuple[str, Union[str, int]]], value: Any) -> None:
+        if isinstance(key, tuple):
+            id, column, *keys = key
 
-            if isinstance(value, (list, dict)):
-                value = json.dumps(value)
-
-            values.append(value)
-            placeholders.append("?")
-        keys_str = ", ".join(keys)
-        placeholders_str = ", ".join(placeholders)
-        update_str = ", ".join([f"{key} = ?" for key in keys])
-
-        query = f"""
-        INSERT INTO {self.name} ({keys_str})
-        VALUES ({placeholders_str})
-        ON CONFLICT(id) DO UPDATE SET {update_str}
-        """
-
-        self._connection.execute(query, values * 2)
-        self._connection.commit()
-
-    def batch_set(self, items: List[Tuple[str, Dict[str, Any]]]) -> None:
-        """Insert or update multiple items in the index."""
-        if not items:
-            return
-
-        all_keys = set(self.schema.keys())
-        all_keys.add("id")
-        keys_str = ", ".join(all_keys)
-        update_str = ", ".join(
-            [f"{key} = excluded.{key}" for key in all_keys if key != "id"]
-        )
-
-        placeholders = []
-        values = []
-        for id, item in items:
-            item["id"] = id
-            row_values = []
-            for key in all_keys:
-                value = item.get(key, self.schema.get(key))
+            if not keys:
                 if isinstance(value, (list, dict)):
                     value = json.dumps(value)
-                row_values.append(value)
-            placeholders.append(f"({', '.join(['?' for _ in row_values])})")
-            values.extend(row_values)
 
-        placeholders_str = ", ".join(placeholders)
+                query = f"""
+                INSERT INTO {self.name} (id, {column})
+                VALUES (?, ?)
+                ON CONFLICT(id) DO UPDATE SET {column} = ?
+                """
+                self._connection.execute(query, (id, value, value))
+                self._connection.commit()
+            else:
+                json_set_path = f'$.{".".join([str(k) for k in keys])}'
+                query = f"""
+                INSERT INTO {self.name} (id, {column})
+                VALUES (?, json(?))
+                ON CONFLICT(id) DO UPDATE SET {column} = json_set({column}, ?, ?)
+                """
+                self._connection.execute(
+                    query,
+                    (
+                        id,
+                        json.dumps({keys[-1]: value}),
+                        json_set_path,
+                        json.dumps(value),
+                    ),
+                )
+                self._connection.commit()
+        else:
+            id = key
+            item = value
+            item["id"] = id
+            keys = []
+            values = []
+            placeholders = []
+            for key, value in item.items():
+                keys.append(key)
 
-        query = f"""
-        INSERT INTO {self.name} ({keys_str})
-        VALUES {placeholders_str}
-        ON CONFLICT(id) DO UPDATE SET {update_str}
-        """
+                if isinstance(value, (list, dict)):
+                    value = json.dumps(value)
 
-        self._connection.executemany(query, values)
-        self._connection.commit()
+                values.append(value)
+                placeholders.append("?")
+            keys_str = ", ".join(keys)
+            placeholders_str = ", ".join(placeholders)
+            update_str = ", ".join([f"{key} = ?" for key in keys])
+
+            query = f"""
+            INSERT INTO {self.name} ({keys_str})
+            VALUES ({placeholders_str})
+            ON CONFLICT(id) DO UPDATE SET {update_str}
+            """
+
+            self._connection.execute(query, values * 2)
+            self._connection.commit()
+
+    def get(self, id: str, *keys: Union[str, int]) -> Optional[Any]:
+        """Retrieve an item or a specific key path value from the item in the index by its id."""
+        value = None
+        if len(keys) == 1:
+            query = f"SELECT {keys[0]} FROM {self.name} WHERE id = ?"
+            cursor = self._connection.execute(query, (id,))
+            row = cursor.fetchone()
+            if row:
+                value = row[0] if row[0] is not None else None
+        elif len(keys) > 1:
+            column = keys[0]
+            key_path_parts = []
+            for key in keys[1:]:
+                if isinstance(key, int):
+                    key_path_parts.append(f"[{key}]")
+                else:
+                    key_path_parts.append(f".{key}")
+            key_path = "$" + "".join(key_path_parts)
+            query = f"SELECT json_extract({column}, ?) FROM {self.name} WHERE id = ?"
+            cursor = self._connection.execute(query, (key_path, id))
+            row = cursor.fetchone()
+            if row:
+                value = row[0] if row[0] is not None else None
+        else:
+            query = f"SELECT * FROM {self.name} WHERE id = ?"
+            cursor = self._connection.execute(query, (id,))
+            row = cursor.fetchone()
+            if row:
+                value = self.__row_to_id_and_item(row)[1]
+
+        if not value:
+            raise KeyError(f"Key {id} {keys} not found in index {self.name}")
+
+        return value
+
+    def __getitem__(
+        self, key: Union[str, Tuple[str, Union[str, int]]]
+    ) -> Optional[Any]:
+        if isinstance(key, tuple):
+            id, *keys = key
+            return self.get(id, *keys)
+        else:
+            id = key
+            return self.get(id)
 
     def __row_to_id_and_item(self, row: sqlite3.Row) -> Tuple[str, Dict[str, Any]]:
         item = dict(row)
@@ -197,26 +239,6 @@ class DefinedIndex:
                 pass
 
         return item["id"], item
-
-    def get(self, id: str, *keys: str) -> Optional[Dict[str, Any]]:
-        """Retrieve an item or a specific key path value from the item in the index by its id."""
-        if not keys:
-            query = f"SELECT * FROM {self.name} WHERE id = ?"
-            cursor = self._connection.execute(query, (id,))
-            row = cursor.fetchone()
-            if row:
-                return self.__row_to_id_and_item(row)[1]
-            else:
-                return None
-        else:
-            key_path = ".".join(keys)
-            query = f"SELECT json_extract({keys[0]}, ?) FROM {self.name} WHERE id = ?"
-            cursor = self._connection.execute(query, (key_path, id))
-            row = cursor.fetchone()
-            if row:
-                return row[0] if row[0] is not None else None
-            else:
-                return None
 
     def search(
         self,
@@ -283,6 +305,7 @@ if __name__ == "__main__":
         "name": "",
         "age": 0,
         "address": {"street": "", "city": "", "state": "", "country": ""},
+        "years": [1, 2, 3, 4],
     }
 
     # Create a new index with the specified schema
@@ -300,9 +323,17 @@ if __name__ == "__main__":
     }
     index.set("1", item)
 
-    # Get an item from the index
-    retrieved_item = index.get("1")
-    print(retrieved_item)
+    index.set(("1", "name"), "updated John Doe")
+    print(index.get("1"))
+
+    index.set(("1", "years"), [1, 2, 3])
+    print(index.get("1"))
+
+    index.set(("1", "years", 1), 4)
+    print(index.get("1"))
+
+    index.set(("1", "address", "state"), "updated NY 2")
+    print(index.get("1"))
 
     # Search for items in the index
     query = {"age": (None, 35)}
