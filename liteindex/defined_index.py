@@ -91,40 +91,37 @@ class DefinedIndex:
         if prefix is None:
             prefix = []
 
-        for key, value in query.items():
-            new_prefix = prefix + [key]
+        def process_nested_query(
+            value: Union[Dict, Tuple, List, int, str, float], prefix: List[str]
+        ) -> None:
+            nonlocal where_conditions, params
+            column = (
+                "json_extract(" + prefix[0] + ", '$." + ".".join(prefix[1:]) + "')"
+                if len(prefix) > 1
+                else prefix[0]
+            )
 
             if isinstance(value, dict):
-                nested_conditions, nested_params = self._process_query_conditions(
-                    value, prefix=new_prefix
+                for sub_key, sub_value in value.items():
+                    process_nested_query(sub_value, prefix + [sub_key])
+            elif isinstance(value, tuple):
+                if value[0] is not None:
+                    where_conditions.append(f"{column} >= ?")
+                    params.append(value[0])
+                if value[1] is not None:
+                    where_conditions.append(f"{column} <= ?")
+                    params.append(value[1])
+            elif isinstance(value, list):
+                where_conditions.append(
+                    f"{column} IN ({', '.join(['?' for _ in value])})"
                 )
-                where_conditions.extend(nested_conditions)
-                params.extend(nested_params)
-            elif isinstance(value, (int, float, str)):
-                if not prefix:
-                    where_conditions.append(f"{key} = ?")
-                else:
-                    where_conditions.append(
-                        f"json_extract({new_prefix[0]}, '$.{'.'.join(new_prefix[1:])}') = ?"
-                    )
-                params.append(value)
-            elif isinstance(value, (tuple, list)):
-                if isinstance(value[0], (int, float, str)):
-                    where_conditions.append(
-                        f"json_extract({new_prefix[0]}, '$.{'.'.join(new_prefix[1:])}') IN ({','.join(['?' for _ in value])})"
-                    )
-                    params.extend(value)
-                elif isinstance(value, tuple):
-                    operator, condition_value = value
-                    if operator in ("<", ">", "<=", ">=", "=", "<>"):
-                        where_conditions.append(
-                            f"json_extract({new_prefix[0]}, '$.{'.'.join(new_prefix[1:])}') {operator} ?"
-                        )
-                        params.append(condition_value)
-                    else:
-                        raise ValueError(f"Invalid operator: {operator}")
+                params.extend(value)
             else:
-                raise ValueError(f"Unsupported value type: {value}")
+                where_conditions.append(f"{column} = ?")
+                params.append(value)
+
+        for key, value in query.items():
+            process_nested_query(value, [key])
 
         return where_conditions, params
 
@@ -153,6 +150,42 @@ class DefinedIndex:
         """
 
         self._connection.execute(query, values * 2)
+        self._connection.commit()
+
+    def batch_set(self, items: List[Tuple[str, Dict[str, Any]]]) -> None:
+        """Insert or update multiple items in the index."""
+        if not items:
+            return
+
+        all_keys = set(self.schema.keys())
+        all_keys.add("id")
+        keys_str = ", ".join(all_keys)
+        update_str = ", ".join(
+            [f"{key} = excluded.{key}" for key in all_keys if key != "id"]
+        )
+
+        placeholders = []
+        values = []
+        for id, item in items:
+            item["id"] = id
+            row_values = []
+            for key in all_keys:
+                value = item.get(key, self.schema.get(key))
+                if isinstance(value, (list, dict)):
+                    value = json.dumps(value)
+                row_values.append(value)
+            placeholders.append(f"({', '.join(['?' for _ in row_values])})")
+            values.extend(row_values)
+
+        placeholders_str = ", ".join(placeholders)
+
+        query = f"""
+        INSERT INTO {self.name} ({keys_str})
+        VALUES {placeholders_str}
+        ON CONFLICT(id) DO UPDATE SET {update_str}
+        """
+
+        self._connection.executemany(query, values)
         self._connection.commit()
 
     def __row_to_id_and_item(self, row: sqlite3.Row) -> Tuple[str, Dict[str, Any]]:
@@ -217,6 +250,7 @@ class DefinedIndex:
         else:
             query = f"SELECT COUNT(*) FROM {self.name}"
             params = []
+
         cursor = self._connection.execute(query, params)
         return cursor.fetchone()[0]
 
@@ -271,7 +305,7 @@ if __name__ == "__main__":
     print(retrieved_item)
 
     # Search for items in the index
-    query = {"address": {"state": "NY"}}
+    query = {"age": (None, 35)}
     results = index.search(query)
     for result in results:
         print("--", result)
