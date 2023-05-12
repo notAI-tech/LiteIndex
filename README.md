@@ -33,9 +33,9 @@ index.set("1", {
 })
 
 # Query the index to retrieve items based on certain conditions
-# (e.g., age >= 25, city = "New York")
+# (e.g., age <= 25, city = "New York")
 query = {
-    "age": (">=", 25),
+    "age": (None, 25),
     "address": {
         "city": "New York"
     }
