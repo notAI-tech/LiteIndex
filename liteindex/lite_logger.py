@@ -2,7 +2,7 @@ import logging
 import sys
 import uuid
 import functools
-from defined_index import DefinedIndex
+from .defined_index import DefinedIndex
 import inspect
 
 
@@ -15,11 +15,22 @@ class LiteLogger:
         logging.CRITICAL: "\033[35m",  # Magenta
     }
 
-    def __init__(self, app_name, app_tags=[]):
+    LOG_LEVELS = {
+        "debug": logging.DEBUG,
+        "info": logging.INFO,
+        "warning": logging.WARNING,
+        "error": logging.ERROR,
+        "critical": logging.CRITICAL,
+    }
+
+    def __init__(self, app_name, app_tags=[], min_log_level="debug"):
+        log_level = self.LOG_LEVELS[min_log_level.lower()]
+
         self.app_tags = app_tags
         self.logger = logging.getLogger(app_name)
-        self.logger.setLevel(logging.DEBUG)
+        self.logger.setLevel(log_level)
         ch = logging.StreamHandler(sys.stdout)
+        ch.setLevel(log_level)
         ch.setLevel(logging.DEBUG)
         formatter = logging.Formatter(
             "%(asctime)s - %(levelname)s - %(log_name)s - %(file_name)s:%(line_no)d - %(message)s"
@@ -41,30 +52,7 @@ class LiteLogger:
             },
         )
 
-    def auto_log(self, func):
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            try:
-                result = func(*args, **kwargs)
-                self.info(
-                    func.__name__,
-                    "AUTO_LOG",
-                    [],
-                    f"{func.__name__} executed successfully",
-                )
-                return result
-            except Exception as e:
-                self.exception(
-                    func.__name__,
-                    "AUTO_LOG",
-                    [],
-                    f"{func.__name__} raised an exception: {e}",
-                )
-                raise
-
-        return wrapper
-
-    def _log(self, level, name, id, tags=[], *args, **kwargs):
+    def _log(self, level, name, id="", tags=[], *args, **kwargs):
         msg = ", ".join(str(arg) for arg in args)
         frame = inspect.stack()[2]
         file_name, line_number, _, _, _ = inspect.getframeinfo(frame.frame)
@@ -87,27 +75,33 @@ class LiteLogger:
         }
         self.log_index.set(str(uuid.uuid4()), log_data)
 
-    def info(self, name, id, tags=[], *args, **kwargs):
+    def info(self, name, id="", tags=[], *args, **kwargs):
+        print("name", name)
+        print("id", id)
+        print("tags", tags)
+        print("args", *args)
+        print("kwargs", **kwargs)
+
         sys.stdout.write(self.LEVEL_COLORS[logging.INFO])
         self._log(logging.INFO, name, id, tags, *args, **kwargs)
         sys.stdout.write("\033[0m")
 
-    def warning(self, name, id, tags=[], *args, **kwargs):
+    def warning(self, name, id="", tags=[], *args, **kwargs):
         sys.stdout.write(self.LEVEL_COLORS[logging.WARNING])
         self._log(logging.WARNING, name, id, tags, *args, **kwargs)
         sys.stdout.write("\033[0m")
 
-    def error(self, name, id, tags=[], *args, **kwargs):
+    def error(self, name, id="", tags=[], *args, **kwargs):
         sys.stdout.write(self.LEVEL_COLORS[logging.ERROR])
         self._log(logging.ERROR, name, id, tags, *args, exc_info=True, **kwargs)
         sys.stdout.write("\033[0m")
 
-    def exception(self, name, id, tags=[], *args, **kwargs):
+    def exception(self, name, id="", tags=[], *args, **kwargs):
         sys.stdout.write(self.LEVEL_COLORS[logging.ERROR])
         self._log(logging.ERROR, name, id, tags, *args, exc_info=True, **kwargs)
         sys.stdout.write("\033[0m")
 
-    def critical(self, name, id, tags=[], *args, **kwargs):
+    def critical(self, name, id="", tags=[], *args, **kwargs):
         sys.stdout.write(self.LEVEL_COLORS[logging.CRITICAL])
         self._log(logging.CRITICAL, name, id, tags, *args, **kwargs)
         sys.stdout.write("\033[0m")
@@ -130,10 +124,6 @@ if __name__ == "__main__":
 
     logger = LiteLogger("MyApp", app_tags=["application", "demo"])
 
-    @logger.auto_log
-    def example_function(x, y):
-        return x + y
-
     # Info logging
     logger.info(
         "Example", "INFO_LOG", ["tag1", "tag2"], "This is an info log with two tags"
@@ -151,10 +141,6 @@ if __name__ == "__main__":
 
     # Exception logging
     simulate_exception()
-
-    # Using auto_log decorator
-    result = example_function(1, 2)
-    print(f"Result of example_function: {result}")
 
     # Sleep for a while to demonstrate time in logs
     time.sleep(2)
