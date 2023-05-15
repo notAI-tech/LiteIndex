@@ -8,7 +8,6 @@ import inspect
 
 class LiteLogger:
     LEVEL_COLORS = {
-        logging.DEBUG: "\033[37m",  # White
         logging.INFO: "\033[32m",  # Green
         logging.WARNING: "\033[33m",  # Yellow
         logging.ERROR: "\033[31m",  # Red
@@ -16,14 +15,13 @@ class LiteLogger:
     }
 
     LOG_LEVELS = {
-        "debug": logging.DEBUG,
         "info": logging.INFO,
         "warning": logging.WARNING,
         "error": logging.ERROR,
         "critical": logging.CRITICAL,
     }
 
-    def __init__(self, app_name, app_tags=[], min_log_level="debug"):
+    def __init__(self, app_name, app_tags=[], min_log_level="info"):
         log_level = self.LOG_LEVELS[min_log_level.lower()]
 
         self.app_tags = app_tags
@@ -31,7 +29,6 @@ class LiteLogger:
         self.logger.setLevel(log_level)
         ch = logging.StreamHandler(sys.stdout)
         ch.setLevel(log_level)
-        ch.setLevel(logging.DEBUG)
         formatter = logging.Formatter(
             "%(asctime)s - %(levelname)s - %(log_name)s - %(file_name)s:%(line_no)d - %(message)s"
         )
