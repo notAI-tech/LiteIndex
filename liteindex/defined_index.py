@@ -1,12 +1,11 @@
 import json
 import sqlite3
-from typing import Any, Union, List, Iterator, Optional, Dict, Tuple
+import random
+from query_parser import search_query
 
 
 class DefinedIndex:
-    def __init__(
-        self, name: str, schema: Optional[dict] = None, db_path: str = ":memory:"
-    ):
+    def __init__(self, name, schema=None, db_path=":memory:"):
         self.name = name
         self.db_path = db_path
         self._connection = sqlite3.connect(self.db_path, uri=True)
@@ -16,6 +15,10 @@ class DefinedIndex:
         else:
             self.schema = schema
             self._validate_schema()
+        self.column_type_map = {
+            key: self._get_column_type(value) for key, value in self.schema.items()
+        }
+
         self._initialize_db()
 
     def _initialize_db(self):
@@ -40,7 +43,7 @@ class DefinedIndex:
             schema[column_name] = self._get_value_from_column_type(column_type)
         return schema
 
-    def _get_value_from_column_type(self, column_type: str):
+    def _get_value_from_column_type(self, column_type):
         if column_type.startswith("TEXT"):
             return ""
         elif column_type == "NUMBER":
@@ -72,7 +75,7 @@ class DefinedIndex:
         )
         self._connection.commit()
 
-    def _get_column_type(self, value: Any) -> str:
+    def _get_column_type(self, value):
         if isinstance(value, bool):
             return "INTEGER"  # SQLite does not have a native BOOLEAN type, but INTEGER can store 0 (False) or 1 (True)
         elif isinstance(value, (int, float)):
@@ -82,50 +85,7 @@ class DefinedIndex:
         else:
             return "TEXT"
 
-    def _process_query_conditions(
-        self, query: Dict, prefix: Optional[List[str]] = None
-    ) -> Tuple[List[str], List]:
-        where_conditions = []
-        params = []
-
-        if prefix is None:
-            prefix = []
-
-        def process_nested_query(
-            value: Union[Dict, Tuple, List, int, str, float], prefix: List[str]
-        ) -> None:
-            nonlocal where_conditions, params
-            column = (
-                "json_extract(" + prefix[0] + ", '$." + ".".join(prefix[1:]) + "')"
-                if len(prefix) > 1
-                else prefix[0]
-            )
-
-            if isinstance(value, dict):
-                for sub_key, sub_value in value.items():
-                    process_nested_query(sub_value, prefix + [sub_key])
-            elif isinstance(value, tuple):
-                if value[0] is not None:
-                    where_conditions.append(f"{column} >= ?")
-                    params.append(value[0])
-                if value[1] is not None:
-                    where_conditions.append(f"{column} <= ?")
-                    params.append(value[1])
-            elif isinstance(value, list):
-                where_conditions.append(
-                    f"{column} IN ({', '.join(['?' for _ in value])})"
-                )
-                params.extend(value)
-            else:
-                where_conditions.append(f"{column} = ?")
-                params.append(value)
-
-        for key, value in query.items():
-            process_nested_query(value, [key])
-
-        return where_conditions, params
-
-    def set(self, key: Union[str, Tuple[str, Union[str, int]]], value: Any) -> None:
+    def set(self, key, value):
         if isinstance(key, tuple):
             id, column, *keys = key
 
@@ -185,7 +145,7 @@ class DefinedIndex:
             self._connection.execute(query, values * 2)
             self._connection.commit()
 
-    def get(self, id: str, *keys: Union[str, int]) -> Optional[Any]:
+    def get(self, id, *keys):
         """Retrieve an item or a specific key path value from the item in the index by its id."""
         value = None
         if len(keys) == 1:
@@ -220,9 +180,7 @@ class DefinedIndex:
 
         return value
 
-    def __getitem__(
-        self, key: Union[str, Tuple[str, Union[str, int]]]
-    ) -> Optional[Any]:
+    def __getitem__(self, key):
         if isinstance(key, tuple):
             id, *keys = key
             return self.get(id, *keys)
@@ -230,7 +188,7 @@ class DefinedIndex:
             id = key
             return self.get(id)
 
-    def __row_to_id_and_item(self, row: sqlite3.Row) -> Tuple[str, Dict[str, Any]]:
+    def __row_to_id_and_item(self, row):
         item = dict(row)
         for k, v in item.items():
             try:
@@ -242,31 +200,39 @@ class DefinedIndex:
 
     def search(
         self,
-        query: Optional[Dict],
-        sort_by: Optional[str] = None,
-        reversed_sort: Optional[bool] = False,
-    ) -> List[Dict]:
-
-        if query:
-            where_conditions, params = self._process_query_conditions(query)
-            where_clause = " AND ".join(where_conditions)
-            query = f"SELECT * FROM {self.name} WHERE {where_clause}"
-        else:
-            query = f"SELECT * FROM {self.name}"
-            params = []
-
-        if sort_by:
-            query += f" ORDER BY {sort_by}"
-            if reversed_sort:
-                query += " DESC"
-
+        query={},
+        sort_by=None,
+        reversed_sort=False,
+        n=None,
+        page=None,
+        page_size=50,
+        select_columns=None,
+    ):
+        query, params = search_query(
+            table_name=self.name,
+            query=query,
+            column_type_map=self.column_type_map,
+            sort_by=sort_by,
+            reversed_sort=reversed_sort,
+            n=n,
+            page=page,
+            page_size=page_size,
+            select_columns=select_columns,
+        )
         cursor = self._connection.execute(query, params)
-        for row in cursor:
-            yield self.__row_to_id_and_item(row)
 
-    def count(self, query: Optional[Dict] = None) -> int:
+        def gen():
+            for row in cursor:
+                yield self.__row_to_id_and_item(row)
+
+        if n is None and page is None:
+            return gen()
+        else:
+            return [self.__row_to_id_and_item(row) for row in cursor.fetchall()]
+
+    def count(self, query):
         if query:
-            where_conditions, params = self._process_query_conditions(query)
+            where_conditions, params = parse_query(query, self.column_type_map)
             where_clause = " AND ".join(where_conditions)
             query = f"SELECT COUNT(*) FROM {self.name} WHERE {where_clause}"
         else:
@@ -276,9 +242,9 @@ class DefinedIndex:
         cursor = self._connection.execute(query, params)
         return cursor.fetchone()[0]
 
-    def sum(self, column: str, query: Optional[Dict] = None) -> float:
+    def sum(self, column, query):
         if query:
-            where_conditions, params = self._process_query_conditions(query)
+            where_conditions, params = parse_query(query, self.column_type_map)
             where_clause = " AND ".join(where_conditions)
             query = f"SELECT SUM({column}) FROM {self.name} WHERE {where_clause}"
         else:
@@ -287,9 +253,9 @@ class DefinedIndex:
         cursor = self._connection.execute(query, params)
         return cursor.fetchone()[0]
 
-    def average(self, column: str, query: Optional[Dict] = None) -> float:
+    def average(self, column, query):
         if query:
-            where_conditions, params = self._process_query_conditions(query)
+            where_conditions, params = parse_query(query, self.column_type_map)
             where_clause = " AND ".join(where_conditions)
             query = f"SELECT AVG({column}) FROM {self.name} WHERE {where_clause}"
         else:
