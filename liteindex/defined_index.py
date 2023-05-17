@@ -61,6 +61,9 @@ class DefinedIndex:
 
     def _validate_schema(self):
         for key, value in self.schema.items():
+            if key == "id":
+                raise ValueError("The schema should not include an 'id' key.")
+
             if not isinstance(key, str):
                 raise ValueError(f"Invalid schema key: {key}. Keys must be strings.")
             if not isinstance(value, (str, int, float, list, dict, bool)):
@@ -331,7 +334,7 @@ class DefinedIndex:
             except:
                 pass
 
-        return item["id"], item
+        return item.pop("id"), item
 
     def search(
         self,
