@@ -1,3 +1,4 @@
+import re
 import json
 import sqlite3
 import random
@@ -46,14 +47,6 @@ class DefinedIndex:
             schema[column_name] = self._get_value_from_column_type(column_type)
         return schema
 
-    def drop(self):
-        """
-        Drops the table from the database.
-        """
-        query = f"DROP TABLE IF EXISTS {self.name}"
-        self._connection.execute(query)
-        self._connection.commit()
-
     def _get_value_from_column_type(self, column_type):
         if column_type.startswith("TEXT"):
             return ""
@@ -100,6 +93,39 @@ class DefinedIndex:
             return "JSON"
         else:
             return "TEXT"
+
+    def optimize(self, key_name):
+        if key_name not in self.schema:
+            raise ValueError(f"Invalid key_name: {key_name}. Key not in schema.")
+
+        index_name = f"{self.name}_{key_name}_idx"
+        self._connection.execute(
+            f"CREATE INDEX IF NOT EXISTS {index_name} ON {self.name} ({key_name})"
+        )
+        self._connection.commit()
+
+    def list_optimized_keys(self):
+        cursor = self._connection.cursor()
+        cursor.execute(
+            f"SELECT name, sql FROM sqlite_master WHERE type='index' AND tbl_name='{self.name}'"
+        )
+        results = cursor.fetchall()
+        optimized_keys = []
+        for result in results:
+            index_name = result["name"]
+            index_sql = result["sql"]
+            if index_sql is not None:
+                column_name = re.search(r"\((.*?)\)", index_sql).group(1)
+                optimized_keys.append(column_name)
+        return optimized_keys
+
+    def drop(self):
+        """
+        Drops the table from the database.
+        """
+        query = f"DROP TABLE IF EXISTS {self.name}"
+        self._connection.execute(query)
+        self._connection.commit()
 
     def add(self, value):
         if not self.auto_key:
