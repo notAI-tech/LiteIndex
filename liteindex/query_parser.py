@@ -162,6 +162,24 @@ def count_query(table_name, query, column_type_map):
     return query_str, params
 
 
+def delete_query(table_name, query, column_type_map):
+    # Check if the query is empty
+    if not query:
+        # Optimize by clearing the table using DELETE without WHERE
+        query_str = f"DELETE FROM {table_name}"
+        params = []
+    else:
+        # Prepare the query
+        where_conditions, params = parse_query(query, column_type_map)
+
+        # Build the query string
+        query_str = f"DELETE FROM {table_name}"
+        if where_conditions:
+            query_str += f" WHERE {' AND '.join(where_conditions)}"
+
+    return query_str, params
+
+
 if __name__ == "__main__":
     import unittest
     import json
