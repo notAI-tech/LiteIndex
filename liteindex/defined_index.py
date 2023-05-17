@@ -1,7 +1,7 @@
 import json
 import sqlite3
 import random
-from query_parser import search_query, distinct_query, count_query, delete_query
+from .query_parser import search_query, distinct_query, count_query, delete_query
 
 
 class DefinedIndex:
@@ -259,6 +259,10 @@ class DefinedIndex:
             row = cursor.fetchone()
             if row:
                 value = row[0] if row[0] is not None else None
+                # Check if the column is a JSON column and parse the JSON string
+                if len(keys) >= 1 and self.column_type_map[keys[0]] == "JSON":
+                    value = json.loads(value) if value is not None else None
+
         elif len(keys) > 1:
             column = keys[0]
             key_path_parts = []

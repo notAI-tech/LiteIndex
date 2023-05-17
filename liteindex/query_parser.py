@@ -30,7 +30,7 @@ def parse_query(query, column_type_map, prefix=None):
                     }[sub_key]
 
                     # Handle the case for JSON columns with "$like" operator
-                    if column_type_map[prefix[0]] == "json" and sub_key == "$like":
+                    if column_type_map[prefix[0]] == "JSON" and sub_key == "$like":
                         sub_conditions.append(
                             f"JSON_EXTRACT({column}, '$[*]') {operator} ?"
                         )
@@ -54,7 +54,7 @@ def parse_query(query, column_type_map, prefix=None):
                 where_conditions.append(f"({' AND '.join(sub_conditions)})")
 
         elif isinstance(value, list):
-            if column_type_map[prefix[0]] == "json":
+            if column_type_map[prefix[0]] == "JSON":
                 json_conditions = [f"JSON_CONTAINS({column}, ?)" for _ in value]
                 # Add parentheses around the OR condition
                 where_conditions.append(f"({ ' OR '.join(json_conditions) })")
@@ -140,7 +140,7 @@ def distinct_query(table_name, column, query, column_type_map):
     where_conditions, params = parse_query(query, column_type_map)
 
     # Build the query string
-    if column_type_map[column] == "json":
+    if column_type_map[column] == "JSON":
         query_str = f"SELECT DISTINCT JSON_EXTRACT({column}, '$[*]') FROM {table_name}"
     else:
         query_str = f"SELECT DISTINCT {column} FROM {table_name}"
@@ -187,10 +187,10 @@ if __name__ == "__main__":
     class TestSearchQuery(unittest.TestCase):
         def setUp(self):
             self.column_type_map = {
-                "age": "number",
-                "name": "text",
-                "tags_list": "json",
-                "tag_id_to_name": "json",
+                "age": "NUMBER",
+                "name": "TEXT",
+                "tags_list": "JSON",
+                "tag_id_to_name": "JSON",
                 "is_true": "INTEGER",
             }
 
@@ -388,10 +388,10 @@ if __name__ == "__main__":
     class TestDistinctAndCountQuery(unittest.TestCase):
         def setUp(self):
             self.column_type_map = {
-                "age": "number",
-                "name": "text",
-                "tags_list": "json",
-                "tag_id_to_name": "json",
+                "age": "NUMBER",
+                "name": "TEXT",
+                "tags_list": "JSON",
+                "tag_id_to_name": "JSON",
                 "is_true": "INTEGER",
             }
 
