@@ -19,11 +19,12 @@ schema = {
 }
 
 # Create a DefinedIndex instance
-index = DefinedIndex(name="people", schema=schema)
+index = DefinedIndex(name="people", schema=schema) #optional: db_path="path to a file" #auto_key=False or True. 
 
-# Insert or update a single item in the index
-index.set("1", {
+# Insert or update a single item in the index if auto_key=False (default)
+index.set(user_name, {
     "name": "Alice",
+    "password": "xxxjjssjsjsjsksk",
     "age": 30,
     "address": {
         "street": "123 Main St",
@@ -32,17 +33,36 @@ index.set("1", {
     }
 })
 
-# Query the index to retrieve items based on certain conditions
-# (e.g., age <= 25, city = "New York")
-query = {
-    "age": (None, 25),
+# If auto_key=True
+integer_id = index.add({
+    "name": "Alice",
+    "password": "xxxjjssjsjsjsksk",
+    "age": 30,
     "address": {
-        "city": "New York"
+        "street": "123 Main St",
+        "city": "New York",
+        "country": "USA"
     }
-}
-results = index.search(query)
+})
 
-for result in results:
-    print(f"ID: {result['id']}, Name: {result['name']}, Age: {result['age']}, Address: {result['address']}")
+# Set full or partial value for a key
+index.set(key, value)
+
+# Set value for a key
+index.set((key, sub_key), value)
+
+# Get value of a key
+index.get(key)
+
+# Get value of a sub key
+index.get(key, sub_key)
+
+# index.search()
+
+# index.count()
+
+# index.delete()
+
+# index.drop()
 
 ```
