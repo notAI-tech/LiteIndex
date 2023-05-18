@@ -141,25 +141,31 @@ class DefinedIndex:
         else:
             raise ValueError("The add function accepts a dict or a list of dicts")
 
-        keys = []
+        # Collect all unique keys in a set
+        key_set = set()
+        for item in value_list:
+            key_set.update(item.keys())
+
+        # Cast the set to a list maintaining order
+        keys = list(key_set)
+
         all_values = []
         for item in value_list:
             values = []
-            placeholders = []
-            for key, val in item.items():
+            for key in keys:
                 if key == "id":
                     raise ValueError(
                         "The add function should not include an 'id' key in the input dict"
                     )
 
-                if key not in keys:
-                    keys.append(key)
+                # Handle missing keys by setting the value to None
+                val = item.get(key, None)
 
                 if isinstance(val, (list, dict)):
                     val = json.dumps(val)
 
                 values.append(val)
-                placeholders.append("?")
+
             all_values.append(values)
 
         keys_str = ", ".join(keys)
@@ -170,9 +176,8 @@ class DefinedIndex:
         VALUES ({placeholders_str})
         """
 
-        cursor = self._connection.executemany(query, all_values)
+        self._connection.executemany(query, all_values)
         self._connection.commit()
-
 
     def set(self, key, value):
         if self.auto_key and isinstance(key, str):
