@@ -391,7 +391,7 @@ class DefinedIndex:
         )
         cursor = self._connection.execute(query, params)
         rows = cursor.fetchall()
-        if row:
+        if rows:
             return [row[0] for row in rows]
         else:
             return []
