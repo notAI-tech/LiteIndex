@@ -390,7 +390,7 @@ class DefinedIndex:
             column_type_map=self.column_type_map,
         )
         cursor = self._connection.execute(query, params)
-        row = cursor.fetchall()
+        rows = cursor.fetchall()
         if row:
             return [row[0] for row in rows]
         else:
