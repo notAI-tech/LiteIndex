@@ -1,4 +1,5 @@
 import re
+import os
 import json
 import sqlite3
 import random
@@ -9,6 +10,7 @@ class DefinedIndex:
     def __init__(self, name, schema=None, db_path=":memory:", auto_key=False):
         self.name = name
         self.db_path = db_path
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         self.auto_key = auto_key
         self._connection = sqlite3.connect(self.db_path, uri=True)
         self._connection.row_factory = sqlite3.Row
@@ -395,7 +397,6 @@ class DefinedIndex:
             return [row[0] for row in rows if row is not None]
         else:
             return []
-
 
 
 if __name__ == "__main__":
