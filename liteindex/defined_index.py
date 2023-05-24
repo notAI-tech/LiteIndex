@@ -392,7 +392,7 @@ class DefinedIndex:
         cursor = self._connection.execute(query, params)
         rows = cursor.fetchall()
         if rows:
-            return [row[0] for row in rows]
+            return [row[0] for row in rows if row is not None]
         else:
             return []
 
