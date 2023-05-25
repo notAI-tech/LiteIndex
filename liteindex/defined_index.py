@@ -405,6 +405,44 @@ class DefinedIndex:
         else:
             return []
 
+    def math(self, key, function, id=None, value=None):
+        functions = {"+", "-", "*", "/", "**", "%", "average", "sum", "min", "max"}
+        sql_map = {
+            "+": f"UPDATE {self.name} " + "SET {} = {} + ? WHERE id = ?",
+            "-": f"UPDATE {self.name} " + "SET {} = {} - ? WHERE id = ?",
+            "*": f"UPDATE {self.name} " + "SET {} = {} * ? WHERE id = ?",
+            "/": f"UPDATE {self.name} " + "SET {} = {} / ? WHERE id = ?",
+            "**": f"UPDATE {self.name} " + "SET {} = {} ** ? WHERE id = ?",
+            "%": f"UPDATE {self.name} " + "SET {} = {} % ? WHERE id = ?",
+        }
+
+        if function not in functions:
+            raise ValueError(
+                f"Unsupported function '{function}', available options are: {functions}"
+            )
+
+        if function in sql_map:
+            if value is None or id is None:
+                raise ValueError(
+                    f"Value and id must be provided for function '{function}'"
+                )
+            sql = sql_map[function].format(key, key)
+            self._connection.execute(sql, (value, id))
+            self._connection.commit()
+        else:
+            aggregation_map = {
+                "average": "AVG",
+                "sum": "SUM",
+                "min": "MIN",
+                "max": "MAX",
+            }
+
+            result = self._connection.execute(
+                f"SELECT {aggregation_map[function]}({key}) FROM {self.name}"
+            ).fetchone()[0]
+
+            return result
+
 
 if __name__ == "__main__":
     # Define the schema for the index
