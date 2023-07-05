@@ -1,8 +1,11 @@
 # LiteIndex
-ultra fast, thread and process safe, easily queryable Indexes for Python.
+fast, thread and process safe, easily queryable Indexes for Python.
 
 
 # DefinedIndex
+
+**Initialize the DefinedIndex.**
+- if `db_path` defaults to in-memory.
 
 ```python
 from liteindex import DefinedIndex
@@ -11,58 +14,34 @@ from liteindex import DefinedIndex
 schema = {
     "name": "",
     "age": 0,
-    "address": {
-        "street": "",
-        "city": "",
-        "country": ""
-    }
+    "password": "",
+    "verified": False
 }
 
 # Create a DefinedIndex instance
-index = DefinedIndex(name="people", schema=schema) #optional: db_path="path to a file" #auto_key=False or True. 
+index = DefinedIndex(name="people", schema=schema, db_path="./test.liteindex")
+```
 
-# Insert or update a single item in the index if auto_key=False (default)
-index.set(user_name, {
-    "name": "Alice",
+**Set, Delete**
+```python
+# set can be partial or full, can be an existing key or new key.
+index.set("alice", {
+    "name": "Alicee",
     "password": "xxxjjssjsjsjsksk",
-    "age": 30,
-    "address": {
-        "street": "123 Main St",
-        "city": "New York",
-        "country": "USA"
-    }
+    "age": 30
 })
 
-# If auto_key=True
-integer_id = index.add({
-    "name": "Alice",
-    "password": "xxxjjssjsjsjsksk",
-    "age": 30,
-    "address": {
-        "street": "123 Main St",
-        "city": "New York",
-        "country": "USA"
-    }
-})
+# Set value for a sub key
+index.set(("alice", "name"), "Alice")
 
-# Set full or partial value for a key
-index.set(key, value)
-
-# Set value for a key
-index.set((key, sub_key), value)
+# Same as
+index.set("alice", {"name": "Alice"})
 
 # Get value of a key
-index.get(key)
+index.get("alice")
 
 # Get value of a sub key
-index.get(key, sub_key)
+index.get("alice", "name")
 
-# index.search()
-
-# index.count()
-
-# index.delete()
-
-# index.drop()
-
+# Delete
 ```
