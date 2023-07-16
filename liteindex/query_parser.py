@@ -103,6 +103,9 @@ def search_query(
     where_conditions, params = parse_query(query, column_type_map)
 
     # Select columns or all if not specified
+    if "id" not in select_columns:
+        select_columns.append("id")
+
     selected_columns = ", ".join(select_columns) if select_columns else "*"
 
     # Build the query string
