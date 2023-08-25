@@ -1,8 +1,9 @@
 import re
 import os
 import json
-import sqlite3
 import random
+import pickle
+import sqlite3
 from .query_parser import search_query, distinct_query, count_query, delete_query
 
 
@@ -65,6 +66,8 @@ class DefinedIndex:
             return {}
         elif column_type == "INTEGER":
             return False
+        elif column_type == "BLOB":
+            return b""
         else:
             raise ValueError(f"Unsupported column type: {column_type}")
 
@@ -75,10 +78,6 @@ class DefinedIndex:
 
             if not isinstance(key, str):
                 raise ValueError(f"Invalid schema key: {key}. Keys must be strings.")
-            if not isinstance(value, (str, int, float, list, dict, bool)):
-                raise ValueError(
-                    f"Invalid schema value for key {key}: {value}. Values must be strings, numbers, booleans, or plain lists or dicts."
-                )
 
     def _create_table(self):
         columns = []
@@ -103,8 +102,10 @@ class DefinedIndex:
             return "NUMBER"
         elif isinstance(value, (list, dict)):
             return "JSON"
-        else:
+        elif isinstance(value, str):
             return "TEXT"
+        else:
+            return "BLOB"
 
     def optimize(self, key_name):
         if key_name not in self.schema:
@@ -170,8 +171,11 @@ class DefinedIndex:
                 # Handle missing keys by setting the value to None
                 val = item.get(key, None)
 
-                if isinstance(val, (list, dict)):
+                if self.column_type_map[key] == "JSON":
                     val = json.dumps(val)
+
+                elif self.column_type_map[key] == "BLOB":
+                    val = pickle.dumps(val)
 
                 values.append(val)
 
@@ -306,6 +310,8 @@ class DefinedIndex:
                 # Check if the column is a JSON column and parse the JSON string
                 if len(keys) >= 1 and self.column_type_map[keys[0]] == "JSON":
                     value = json.loads(value) if value is not None else None
+                elif len(keys) >= 1 and self.column_type_map[keys[0]] == "BLOB":
+                    value = pickle.loads(value) if value is not None else None
 
         elif len(keys) > 1:
             column = keys[0]
