@@ -1,7 +1,6 @@
 import re
 import os
 import json
-import random
 import pickle
 import sqlite3
 from .query_parser import search_query, distinct_query, count_query, delete_query
@@ -193,69 +192,32 @@ class DefinedIndex:
         self._connection.commit()
 
     def set(self, key, value):
-        if self.auto_key and isinstance(key, str):
-            raise KeyError(
-                "The index has auto_key. use add Function to add new items to the index"
-            )
+        id = key
+        item = value
+        item["id"] = id
+        keys = []
+        values = []
+        placeholders = []
+        for key, value in item.items():
+            keys.append(key)
 
-        if isinstance(key, tuple):
-            id, column, *keys = key
+            if isinstance(value, (list, dict)):
+                value = json.dumps(value)
 
-            if not keys:
-                if isinstance(value, (list, dict)):
-                    value = json.dumps(value)
+            values.append(value)
+            placeholders.append("?")
+        keys_str = ", ".join(keys)
+        placeholders_str = ", ".join(placeholders)
+        update_str = ", ".join([f"{key} = ?" for key in keys])
 
-                query = f"""
-                INSERT INTO {self.name} (id, {column})
-                VALUES (?, ?)
-                ON CONFLICT(id) DO UPDATE SET {column} = ?
-                """
-                self._connection.execute(query, (id, value, value))
-                self._connection.commit()
-            else:
-                json_set_path = f'$.{".".join([str(k) for k in keys])}'
-                query = f"""
-                INSERT INTO {self.name} (id, {column})
-                VALUES (?, json(?))
-                ON CONFLICT(id) DO UPDATE SET {column} = json_set({column}, ?, ?)
-                """
-                self._connection.execute(
-                    query,
-                    (
-                        id,
-                        json.dumps({keys[-1]: value}),
-                        json_set_path,
-                        json.dumps(value),
-                    ),
-                )
-                self._connection.commit()
-        else:
-            id = key
-            item = value
-            item["id"] = id
-            keys = []
-            values = []
-            placeholders = []
-            for key, value in item.items():
-                keys.append(key)
+        query = f"""
+        INSERT INTO {self.name} ({keys_str})
+        VALUES ({placeholders_str})
+        ON CONFLICT(id) DO UPDATE SET {update_str}
+        """
 
-                if isinstance(value, (list, dict)):
-                    value = json.dumps(value)
-
-                values.append(value)
-                placeholders.append("?")
-            keys_str = ", ".join(keys)
-            placeholders_str = ", ".join(placeholders)
-            update_str = ", ".join([f"{key} = ?" for key in keys])
-
-            query = f"""
-            INSERT INTO {self.name} ({keys_str})
-            VALUES ({placeholders_str})
-            ON CONFLICT(id) DO UPDATE SET {update_str}
-            """
-
-            self._connection.execute(query, values * 2)
-            self._connection.commit()
+        self._connection.execute(query, values * 2)
+        self._connection.commit()
 
     def delete(self, x, return_deleted=False):
         to_del_keys = []
@@ -299,19 +261,16 @@ class DefinedIndex:
         return to_return
 
     def get(self, id, *keys):
-        """Retrieve an item or a specific key path value from the item in the index by its id."""
-        value = None
+        values, params, ids = [], [], []
+
+        if isinstance(id, (list, tuple)):
+            ids = id
+        else:
+            ids = [id]
+
         if len(keys) == 1:
-            query = f"SELECT {keys[0]} FROM {self.name} WHERE id = ?"
-            cursor = self._connection.execute(query, (id,))
-            row = cursor.fetchone()
-            if row:
-                value = row[0] if row[0] is not None else None
-                # Check if the column is a JSON column and parse the JSON string
-                if len(keys) >= 1 and self.column_type_map[keys[0]] == "JSON":
-                    value = json.loads(value) if value is not None else None
-                elif len(keys) >= 1 and self.column_type_map[keys[0]] == "BLOB":
-                    value = pickle.loads(value) if value is not None else None
+            query = f"SELECT id, {keys[0]} FROM {self.name} WHERE id IN ({','.join('?'*len(ids))})"
+            params = (*ids,)
 
         elif len(keys) > 1:
             column = keys[0]
@@ -322,30 +281,34 @@ class DefinedIndex:
                 else:
                     key_path_parts.append(f".{key}")
             key_path = "$" + "".join(key_path_parts)
-            query = f"SELECT json_extract({column}, ?) FROM {self.name} WHERE id = ?"
-            cursor = self._connection.execute(query, (key_path, id))
-            row = cursor.fetchone()
-            if row:
-                value = row[0] if row[0] is not None else None
+            query = f"SELECT id, json_extract({column}, ?) FROM {self.name} WHERE id IN ({','.join('?'*len(ids))})"
+            params = (key_path, *ids)
+
         else:
-            query = f"SELECT * FROM {self.name} WHERE id = ?"
-            cursor = self._connection.execute(query, (id,))
-            row = cursor.fetchone()
-            if row:
-                value = self.__row_to_id_and_item(row)[1]
+            query = f"SELECT id, * FROM {self.name} WHERE id IN ({','.join('?'*len(ids))})"
+            params = (*ids,)
 
-        if not value:
-            raise KeyError(f"Key {id} {keys} not found in index {self.name}")
+        cursor = self._connection.execute(query, params)
+        rows = cursor.fetchall()
+        if rows:
+            result_dict = {row[0]: row for row in rows}
 
-        return value
+            for i in ids:
+                if i not in result_dict:
+                    raise KeyError(f"ID {i} not found.")
 
-    def __getitem__(self, key):
-        if isinstance(key, tuple):
-            id, *keys = key
-            return self.get(id, *keys)
-        else:
-            id = key
-            return self.get(id)
+                if len(keys) >= 1 and self.column_type_map.get(keys[0]) == "JSON":
+                    pass
+
+                elif len(keys) >= 1 and self.column_type_map.get(keys[0]) == "BLOB":
+                    pass
+
+                elif not keys:
+                    value = self.__row_to_id_and_item(result_dict[i])[1]
+
+                values.append(value)
+
+        return values if isinstance(id, (list, tuple)) else values[0]
 
     def __row_to_id_and_item(self, row):
         item = dict(row)
