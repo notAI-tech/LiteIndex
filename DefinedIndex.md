@@ -5,6 +5,9 @@
 from liteindex import DefinedIndex
 
 # Define the schema for the index
+# strings, bools, ints, floats, and bytes, json serializable nested dicts, lists are supported natively
+# those fields will be filterable, queryable, and sortable
+# Any other fields will be stored as a blob and can be read and updated, but not filtered, queried, or sorted
 schema = {
     "name": "",
     "age": 0,
@@ -18,10 +21,9 @@ schema = {
 # db path defaults to memory
 # auto_key defaults to False
 index = DefinedIndex(
-            name="people",
+            name="user_details",
             schema=schema,
-            db_path="./test.liteindex",
-            auto_key=False
+            db_path="./test.liteindex"
         )
 ```
 
@@ -44,8 +46,7 @@ index.update(
             },
             "profile_picture": b"......"
         },
-        "jane_doe",
-            {
+        "jane_doe": {
                 "name": "Jane Doe",
                 "age": 28,
                 "verified": True,
