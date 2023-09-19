@@ -5,10 +5,10 @@
 from liteindex import DefinedIndex
 
 # Define the schema for the index
-# strings, bools, ints, floats, and bytes, json serializable nested dicts, lists are supported natively
+# strings, bools, ints, floats, bytes, datetime objects, json serializable nested dicts and lists are supported natively
 # those fields will be filterable, queryable, and sortable
 # Any other fields will be stored as a blob and can be read and updated, but not filtered, queried, or sorted
-# keys can be anything python allows as a dict key
+# keys of schema can be anything python allows as a dict key
 schema = {
     "name": "",
     "age": 0,
