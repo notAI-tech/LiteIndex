@@ -1,7 +1,7 @@
 import json
 
 
-def parse_query(query, column_type_map, prefix=None):
+def parse_query(query, schema, prefix=None):
     where_conditions = []
     params = []
 
@@ -30,7 +30,7 @@ def parse_query(query, column_type_map, prefix=None):
                     }[sub_key]
 
                     # Handle the case for JSON columns with "$like" operator
-                    if column_type_map[prefix[0]] == "JSON" and sub_key == "$like":
+                    if schema[prefix[0]] == "json" and sub_key == "$like":
                         sub_conditions.append(
                             f"JSON_EXTRACT({column}, '$[*]') {operator} ?"
                         )
@@ -54,7 +54,7 @@ def parse_query(query, column_type_map, prefix=None):
                 where_conditions.append(f"({' AND '.join(sub_conditions)})")
 
         elif isinstance(value, list):
-            if column_type_map[prefix[0]] == "JSON":
+            if schema[prefix[0]] == "json":
                 json_conditions = [f"JSON_CONTAINS({column}, ?)" for _ in value]
                 # Add parentheses around the OR condition
                 where_conditions.append(f"({ ' OR '.join(json_conditions) })")
@@ -74,7 +74,7 @@ def parse_query(query, column_type_map, prefix=None):
     for key, value in query.items():
         if key in ["$and", "$or"]:
             sub_conditions, sub_params = zip(
-                *(parse_query(cond, column_type_map) for cond in value)
+                *(parse_query(cond, schema) for cond in value)
             )
             # Flatten the sub_conditions
             sub_conditions = [cond for sublist in sub_conditions for cond in sublist]
@@ -91,7 +91,7 @@ def parse_query(query, column_type_map, prefix=None):
 def search_query(
     table_name,
     query,
-    column_type_map,
+    schema,
     sort_by=None,
     reversed_sort=False,
     n=None,
@@ -100,11 +100,7 @@ def search_query(
     select_columns=None,
 ):
     # Prepare the query
-    where_conditions, params = parse_query(query, column_type_map)
-
-    # Select columns or all if not specified
-    if select_columns and "id" not in select_columns:
-        select_columns.append("id")
+    where_conditions, params = parse_query(query, schema)
 
     selected_columns = ", ".join(select_columns) if select_columns else "*"
 
@@ -138,12 +134,12 @@ def search_query(
     return query_str, params
 
 
-def distinct_query(table_name, column, query, column_type_map):
+def distinct_query(table_name, column, query, schema):
     # Prepare the query
-    where_conditions, params = parse_query(query, column_type_map)
+    where_conditions, params = parse_query(query, schema)
 
     # Build the query string
-    if column_type_map[column] == "JSON":
+    if schema[column] == "json":
         query_str = f"SELECT DISTINCT JSON_EXTRACT({column}, '$[*]') FROM {table_name}"
     else:
         query_str = f"SELECT DISTINCT {column} FROM {table_name}"
@@ -153,9 +149,9 @@ def distinct_query(table_name, column, query, column_type_map):
     return query_str, params
 
 
-def count_query(table_name, query, column_type_map):
+def count_query(table_name, query, schema):
     # Prepare the query
-    where_conditions, params = parse_query(query, column_type_map)
+    where_conditions, params = parse_query(query, schema)
 
     # Build the query string
     query_str = f"SELECT COUNT(*) FROM {table_name}"
@@ -165,7 +161,7 @@ def count_query(table_name, query, column_type_map):
     return query_str, params
 
 
-def delete_query(table_name, query, column_type_map):
+def delete_query(table_name, query, schema):
     # Check if the query is empty
     if not query:
         # Optimize by clearing the table using DELETE without WHERE
@@ -173,7 +169,7 @@ def delete_query(table_name, query, column_type_map):
         params = []
     else:
         # Prepare the query
-        where_conditions, params = parse_query(query, column_type_map)
+        where_conditions, params = parse_query(query, schema)
 
         # Build the query string
         query_str = f"DELETE FROM {table_name}"
@@ -189,22 +185,22 @@ if __name__ == "__main__":
 
     class TestSearchQuery(unittest.TestCase):
         def setUp(self):
-            self.column_type_map = {
-                "age": "NUMBER",
-                "name": "TEXT",
-                "tags_list": "JSON",
-                "tag_id_to_name": "JSON",
+            self.schema = {
+                "age": "number",
+                "name": "string",
+                "tags_list": "json",
+                "tag_id_to_name": "json",
                 "is_true": "INTEGER",
             }
 
         def test_single_condition(self):
-            query, params = search_query("users", {"age": 25}, self.column_type_map)
+            query, params = search_query("users", {"age": 25}, self.schema)
             self.assertEqual(query, "SELECT * FROM users WHERE age = ?")
             self.assertEqual(params, [25])
 
         def test_multiple_conditions(self):
             query, params = search_query(
-                "users", {"age": 25, "name": "john"}, self.column_type_map
+                "users", {"age": 25, "name": "john"}, self.schema
             )
             self.assertEqual(query, "SELECT * FROM users WHERE age = ? AND name = ?")
             self.assertEqual(params, [25, "john"])
@@ -213,7 +209,7 @@ if __name__ == "__main__":
             query, params = search_query(
                 "users",
                 {"$and": [{"age": {"$gte": 20, "$lte": 30}}, {"name": "john"}]},
-                self.column_type_map,
+                self.schema,
             )
             self.assertEqual(
                 query,
@@ -223,7 +219,7 @@ if __name__ == "__main__":
 
         def test_json_conditions(self):
             query, params = search_query(
-                "users", {"tags_list": ["tag1", "tag2"]}, self.column_type_map
+                "users", {"tags_list": ["tag1", "tag2"]}, self.schema
             )
             expected_query = "SELECT * FROM users WHERE (JSON_CONTAINS(tags_list, ?) OR JSON_CONTAINS(tags_list, ?))"
             self.assertEqual(query, expected_query)
@@ -231,7 +227,7 @@ if __name__ == "__main__":
 
         def test_sorting(self):
             query, params = search_query(
-                "users", {"age": 25}, self.column_type_map, sort_by="name"
+                "users", {"age": 25}, self.schema, sort_by="name"
             )
             self.assertEqual(
                 query, "SELECT * FROM users WHERE age = ? ORDER BY name ASC"
@@ -242,7 +238,7 @@ if __name__ == "__main__":
             query, params = search_query(
                 "users",
                 {"$and": [{"age": {"$gte": 20, "$lte": 30}}, {"name": "john"}]},
-                self.column_type_map,
+                self.schema,
                 sort_by=[("age", True), ("name", False)],
             )
             self.assertEqual(
@@ -253,7 +249,7 @@ if __name__ == "__main__":
 
         def test_pagination(self):
             query, params = search_query(
-                "users", {"age": 25}, self.column_type_map, page=2, page_size=10
+                "users", {"age": 25}, self.schema, page=2, page_size=10
             )
             self.assertEqual(query, "SELECT * FROM users WHERE age = ? LIMIT 10, 10")
             self.assertEqual(params, [25])
@@ -262,7 +258,7 @@ if __name__ == "__main__":
             query, params = search_query(
                 "users",
                 {"age": 25},
-                self.column_type_map,
+                self.schema,
                 select_columns=["name", "age"],
             )
             self.assertEqual(query, "SELECT name, age FROM users WHERE age = ?")
@@ -270,7 +266,7 @@ if __name__ == "__main__":
 
         def test_or_operator(self):
             query, params = search_query(
-                "users", {"$or": [{"age": 25}, {"name": "john"}]}, self.column_type_map
+                "users", {"$or": [{"age": 25}, {"name": "john"}]}, self.schema
             )
             self.assertEqual(query, "SELECT * FROM users WHERE (age = ? OR name = ?)")
             self.assertEqual(params, [25, "john"])
@@ -279,7 +275,7 @@ if __name__ == "__main__":
             query, params = search_query(
                 "users",
                 {"age": {"$in": [25, 30]}, "name": {"$nin": ["john", "jane"]}},
-                self.column_type_map,
+                self.schema,
             )
             self.assertEqual(
                 query,
@@ -289,7 +285,7 @@ if __name__ == "__main__":
 
         def test_like_operator(self):
             query, params = search_query(
-                "users", {"name": {"$like": "jo%"}}, self.column_type_map
+                "users", {"name": {"$like": "jo%"}}, self.schema
             )
             self.assertEqual(query, "SELECT * FROM users WHERE (name LIKE ?)")
             self.assertEqual(params, ["jo%"])
@@ -298,14 +294,14 @@ if __name__ == "__main__":
             query, params = search_query(
                 "users",
                 {"tag_id_to_name": {"1": "tag1", "2": "tag2"}},
-                self.column_type_map,
+                self.schema,
             )
             expected_query = "SELECT * FROM users WHERE json_extract(tag_id_to_name, '$.1') = ? AND json_extract(tag_id_to_name, '$.2') = ?"
             self.assertEqual(query, expected_query)
             self.assertEqual(params, ["tag1", "tag2"])
 
         def test_null_values(self):
-            query, params = search_query("users", {"age": None}, self.column_type_map)
+            query, params = search_query("users", {"age": None}, self.schema)
             self.assertEqual(query, "SELECT * FROM users WHERE age IS NULL")
             self.assertEqual(params, [])
 
@@ -321,7 +317,7 @@ if __name__ == "__main__":
                         {"tag_id_to_name": {"1": "tag1", "2": "tag2"}},
                     ]
                 },
-                self.column_type_map,
+                self.schema,
             )
             expected_query = "SELECT * FROM users WHERE ((age >= ? AND age <= ?) AND (name LIKE ?) AND is_true = ? AND (JSON_CONTAINS(tags_list, ?) OR JSON_CONTAINS(tags_list, ?)) AND json_extract(tag_id_to_name, '$.1') = ? AND json_extract(tag_id_to_name, '$.2') = ?)"
             self.assertEqual(query, expected_query)
@@ -333,7 +329,7 @@ if __name__ == "__main__":
             query, params = search_query(
                 "users",
                 {"age": 25},
-                self.column_type_map,
+                self.schema,
                 sort_by="name",
                 reversed_sort=True,
             )
@@ -344,7 +340,7 @@ if __name__ == "__main__":
 
         def test_single_tuple_sorting(self):
             query, params = search_query(
-                "users", {"age": 25}, self.column_type_map, sort_by=[("name", True)]
+                "users", {"age": 25}, self.schema, sort_by=[("name", True)]
             )
             self.assertEqual(
                 query, "SELECT * FROM users WHERE age = ? ORDER BY name DESC"
@@ -352,15 +348,13 @@ if __name__ == "__main__":
             self.assertEqual(params, [25])
 
         def test_ne_operator(self):
-            query, params = search_query(
-                "users", {"age": {"$ne": 25}}, self.column_type_map
-            )
+            query, params = search_query("users", {"age": {"$ne": 25}}, self.schema)
             self.assertEqual(query, "SELECT * FROM users WHERE (age != ?)")
             self.assertEqual(params, [25])
 
         def test_gt_lt_operators(self):
             query, params = search_query(
-                "users", {"age": {"$gt": 20, "$lt": 30}}, self.column_type_map
+                "users", {"age": {"$gt": 20, "$lt": 30}}, self.schema
             )
             self.assertEqual(query, "SELECT * FROM users WHERE (age > ? AND age < ?)")
             self.assertEqual(params, [20, 30])
@@ -369,7 +363,7 @@ if __name__ == "__main__":
             query, params = search_query(
                 "users",
                 {"$or": [{"age": {"$gte": 20, "$lte": 30}}, {"name": "john"}]},
-                self.column_type_map,
+                self.schema,
             )
             self.assertEqual(
                 query, "SELECT * FROM users WHERE ((age >= ? AND age <= ?) OR name = ?)"
@@ -377,30 +371,28 @@ if __name__ == "__main__":
             self.assertEqual(params, [20, 30, "john"])
 
         def test_empty_query(self):
-            query, params = search_query("users", {}, self.column_type_map)
+            query, params = search_query("users", {}, self.schema)
             self.assertEqual(query, "SELECT * FROM users")
             self.assertEqual(params, [])
 
         def test_limit_results(self):
-            query, params = search_query(
-                "users", {"age": 25}, self.column_type_map, n=5
-            )
+            query, params = search_query("users", {"age": 25}, self.schema, n=5)
             self.assertEqual(query, "SELECT * FROM users WHERE age = ? LIMIT 5")
             self.assertEqual(params, [25])
 
     class TestDistinctAndCountQuery(unittest.TestCase):
         def setUp(self):
-            self.column_type_map = {
+            self.schema = {
                 "age": "NUMBER",
                 "name": "TEXT",
-                "tags_list": "JSON",
-                "tag_id_to_name": "JSON",
+                "tags_list": "json",
+                "tag_id_to_name": "json",
                 "is_true": "INTEGER",
             }
 
         def test_distinct_query(self):
             query_str, params = distinct_query(
-                "test_table", "name", {"age": {"$gt": 30}}, self.column_type_map
+                "test_table", "name", {"age": {"$gt": 30}}, self.schema
             )
             self.assertEqual(
                 query_str, "SELECT DISTINCT name FROM test_table WHERE (age > ?)"
@@ -411,7 +403,7 @@ if __name__ == "__main__":
                 "test_table",
                 "tags_list",
                 {"tags_list": ["a", "b"]},
-                self.column_type_map,
+                self.schema,
             )
 
             self.assertEqual(
@@ -424,7 +416,7 @@ if __name__ == "__main__":
             query_str, params = count_query(
                 "test_table",
                 {"name": "John", "age": {"$lt": 50}, "is_true": 1},
-                self.column_type_map,
+                self.schema,
             )
 
             self.assertEqual(
@@ -436,7 +428,7 @@ if __name__ == "__main__":
             query_str, params = count_query(
                 "test_table",
                 {"$or": [{"name": "John"}, {"tags_list": {"$like": "%a%"}}]},
-                self.column_type_map,
+                self.schema,
             )
 
             self.assertEqual(

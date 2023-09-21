@@ -22,6 +22,7 @@ class DefinedIndex:
 
         self.name = name
         self.schema = schema
+        self.hashed_key_schema = {}
         self.meta_table_name = f"__{name}_meta"
         self.db_path = db_path
         self.key_hash_to_original_key = {}
@@ -90,6 +91,7 @@ class DefinedIndex:
             key_hash = stable_hash(key)
             self.key_hash_to_original_key[key_hash] = key
             self.original_key_to_key_hash[key] = key_hash
+            self.hashed_key_schema[key_hash] = value_type
 
     def _create_table_and_meta_table(self):
         columns = []
@@ -202,13 +204,58 @@ class DefinedIndex:
     def search(
         self,
         query={},
-        sort_by=None,
+        sort_by="updated_at",
         reversed_sort=False,
         n_results=None,
         page_no=None,
         page_size=None,
+        select_keys=[],
     ):
-        pass
+        if {
+            k
+            for k in query
+            if k not in self.schema or self.schema[k] in {"blob", "other"}
+        }:
+            raise ValueError("Invalid query")
+
+        sql_query, sql_params = search_query(
+            table_name=self.name,
+            query={self.original_key_to_key_hash[k]: v for k, v in query.items()},
+            schema=self.hashed_key_schema,
+            sort_by=sort_by,
+            reversed_sort=reversed_sort,
+            n=n_results,
+            page=page_no,
+            page_size=page_size,
+            select_columns=(
+                ["id", "updated_at"]
+                + [self.original_key_to_key_hash[k] for k in select_keys]
+            )
+            if select_keys
+            else None,
+        )
+
+        results = {}
+        for result in self._connection.execute(sql_query, sql_params).fetchall():
+            _id, updated_at = result[:2]
+            record = {
+                self.key_hash_to_original_key[h]: val
+                for h, val in zip(self.original_key_to_key_hash.values(), result[2:])
+                if val is not None
+            }
+            for k, v in record.items():
+                if self.schema[k] == "other":
+                    record[k] = pickle.loads(v)
+                elif self.schema[k] == "datetime":
+                    record[k] = datetime.datetime.fromtimestamp(v)
+                elif self.schema[k] == "json":
+                    record[k] = json.loads(v)
+                elif self.schema[k] == "boolean":
+                    record[k] = bool(v)
+
+            results[_id] = record
+
+        return results
 
 
 if __name__ == "__main__":
@@ -247,4 +294,6 @@ if __name__ == "__main__":
         }
     )
 
-    print(index.get("user1", "user2", "user3"))
+    # print(index.get("user1", "user2", "user3"))
+
+    print(index.search(query={"age": {"$gt": 20}}))
