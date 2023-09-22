@@ -1,6 +1,6 @@
 # DefinedIndex
 
-**Initialize DefinedIndex**
+### Initialize DefinedIndex
 ```python
 from liteindex import DefinedIndex
 
@@ -28,7 +28,7 @@ index = DefinedIndex(
         )
 ```
 
-**Insert/Update data**
+### Insert/Update data
 ```python
 # Set a single or multiple, partial or full records.
 index.update(
@@ -56,7 +56,7 @@ index.update(
 )
 ```
 
-**Get Data**
+### Get Data
 ```python
 # get a single or multiple records
 # a dict of format {key: record} is returned
@@ -65,7 +65,7 @@ index.get("john_doe")
 index.get("john_doe", "jane_doe")
 ```
 
-**Delete Data**
+### Delete Data
 ```python
 # delete a single record or multiple records
 # returns dict of format {key: record} of deleted records
@@ -74,19 +74,23 @@ index.delete("john_doe", return_deleted=True)
 index.delete("john_doe", "jane_doe", return_deleted=False)
 ```
 
-**Drop or clear Index**
+### Drop or clear Index
 ```python
 index.clear()
 index.drop()
 ```
 
-**Search**
+### Search
 - `query`: Query dictionary. Defaults to `{}` which will return all records. 
+[Full list of queries supported](https://github.com/notAI-tech/LiteIndex/blob/main/Query.md)
+
 - `sort_by`: A key from schema. Defaults to `updated_at` which will return records in insertion order.
 - `reversed_sort`: Defaults to `False`. If `True`, will return records in reverse order.
 - `n`: Defaults to `None` which will return all records.
 - `page_no`: Defaults to `1` which will return the first page of results.
 - `select_keys`: A list of keys from schema. Defaults to `None` which will return all keys.
+
+[Full list of queries supported](https://github.com/notAI-tech/LiteIndex/blob/main/Query.md)
 
 ```python
 index.search()
