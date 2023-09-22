@@ -1,5 +1,18 @@
 # DefinedIndex
 
+### Schema
+
+| Type      | Description   |
+| ----------- | ----------- |
+| boolean    | use for storing boolean values       |
+| number   | use for storing any type of numbers. int, float ..        |
+| string   | use for storing any type of texts        |
+| json   | use for storing any type of json dump-able objects. lists, dicts        |
+| blob   | use for storing files as bytes        |
+| datetime   | use for storing datetime.datetime objects        |
+| other   | use for any other type of objects that are not in the ones above        |
+
+
 ### Initialize DefinedIndex
 ```python
 from liteindex import DefinedIndex
@@ -10,13 +23,16 @@ from liteindex import DefinedIndex
 # Any other fields will be stored as a blob and can be read and updated, but not filtered, queried, or sorted
 # keys of schema can be anything python allows as a dict key
 schema = {
-    "name": "",
-    "age": 0,
-    "password": "",
-    "verified": False,
-    "nicknames": [],
-    "address_details": {},
-    "profile_picture": b""
+    "name": "string",
+    "age": "number",
+    "password": "string",
+    "verified": "boolean",
+    "nicknames": "json",
+    "address_details": "json",
+    "profile_picture": "blob",
+    "tag_line": "string",
+    "tag_line_embedding": "other",
+    "birthday": "datetime"
 }
 
 # db path defaults to memory
