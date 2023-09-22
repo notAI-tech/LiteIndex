@@ -15,7 +15,7 @@ pip install --upgrade liteindex
 - `blob` and `other` values can only be set, deleted, updated. Cannot be queried upon.
 - Insertion order is preserved 
 
-```
+```python
 from liteindex import DefinedIndex
 
 user_details_schema = {
