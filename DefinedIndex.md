@@ -79,3 +79,27 @@ index.delete("john_doe", "jane_doe", return_deleted=False)
 index.clear()
 index.drop()
 ```
+
+**Search**
+- `query`: Query dictionary. Defaults to `{}` which will return all records. 
+- `sort_by`: A key from schema. Defaults to `updated_at` which will return records in insertion order.
+- `reversed_sort`: Defaults to `False`. If `True`, will return records in reverse order.
+- `n`: Defaults to `None` which will return all records.
+- `page_no`: Defaults to `1` which will return the first page of results.
+- `select_keys`: A list of keys from schema. Defaults to `None` which will return all keys.
+
+```python
+index.search()
+# Returns {id_1: record_1, id_2: record_2, ...}
+# Each record is a dict of format following schema, as inserted.
+# By default ordered by insertion order, and returns all records.
+
+index.search(
+    query={"name": "John Doe"},
+    sort_by="age",
+    reversed_sort=True,
+    n=10,
+    page_no=1,
+    select_keys=["name", "age"]
+)
+```

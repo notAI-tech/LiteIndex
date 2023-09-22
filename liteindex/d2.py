@@ -5,7 +5,7 @@ import json
 import pickle
 import datetime
 import sqlite3
-from query_parser import search_query, distinct_query, count_query, delete_query
+from query_parser import search_query, distinct_query, count_query, delete_query, group_by_query
 
 import hashlib
 import pickle
@@ -206,9 +206,8 @@ class DefinedIndex:
         query={},
         sort_by="updated_at",
         reversed_sort=False,
-        n_results=None,
+        n=None,
         page_no=None,
-        page_size=None,
         select_keys=[],
     ):
         if {
@@ -224,9 +223,9 @@ class DefinedIndex:
             schema=self.hashed_key_schema,
             sort_by=sort_by,
             reversed_sort=reversed_sort,
-            n=n_results,
+            n=n,
             page=page_no,
-            page_size=page_size,
+            page_size=n if page_no else None,
             select_columns=(
                 ["id", "updated_at"]
                 + [self.original_key_to_key_hash[k] for k in select_keys]
@@ -256,6 +255,26 @@ class DefinedIndex:
             results[_id] = record
 
         return results
+    
+    def distinct(self, key, query):
+        sql_query, sql_params = distinct_query(
+            table_name=self.name,
+            column=self.original_key_to_key_hash[key],
+            query={self.original_key_to_key_hash[k]: v for k, v in query.items()},
+            schema=self.hashed_key_schema,
+        )
+
+        return self._connection.execute(sql_query, sql_params).fetchall()
+    
+    def group(self, key, query):
+        sql_query, sql_params = group_by_query(
+            table_name=self.name,
+            column=self.original_key_to_key_hash[key],
+            query={self.original_key_to_key_hash[k]: v for k, v in query.items()},
+            schema=self.hashed_key_schema,
+        )
+
+        return self._connection.execute(sql_query, sql_params).fetchall()
 
 
 if __name__ == "__main__":
@@ -297,3 +316,7 @@ if __name__ == "__main__":
     # print(index.get("user1", "user2", "user3"))
 
     print(index.search(query={"age": {"$gt": 20}}))
+
+    print(index.distinct(key="name", query={"age": {"$gt": 20}}))
+
+    print(index.group(key="name", query={"age": {"$gt": 20}}))
