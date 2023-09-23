@@ -31,7 +31,6 @@ user_details_schema = {
 }
 
 # db path defaults to memory
-# auto_key defaults to False
 index = DefinedIndex(
             name="user_details",
             schema=schema,
