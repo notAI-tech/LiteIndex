@@ -148,21 +148,30 @@ def distinct_query(table_name, column, query, schema):
 
     return query_str, params
 
-def group_by_query(table_name, column, query, schema):
+
+def group_by_query(table_name, columns, query, schema):
     # Prepare the query
     where_conditions, params = parse_query(query, schema)
 
     # Build the query string
-    if schema[column] == "json":
-        query_str = f"SELECT JSON_EXTRACT({column}, '$[*]'), COUNT(*) as count FROM {table_name}"
-    else:
-        query_str = f"SELECT {column}, COUNT(*) as count FROM {table_name}"
+    separator = chr(31)  # unit separator
+    columns_query = ", ".join(
+        [
+            f"JSON_EXTRACT({column}, '$[*]')" if schema[column] == "json" else column
+            for column in columns
+        ]
+    )
+
+    query_str = f"SELECT {columns_query}, GROUP_CONCAT(id, '{separator}') as ids FROM {table_name}"
+
     if where_conditions:
         query_str += f" WHERE {' AND '.join(where_conditions)}"
-    
-    query_str += f" GROUP BY {column}"
+
+    columns_group = ", ".join(columns)
+    query_str += f" GROUP BY {columns_group}"
 
     return query_str, params
+
 
 def count_query(table_name, query, schema):
     # Prepare the query

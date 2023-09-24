@@ -5,7 +5,13 @@ import json
 import pickle
 import datetime
 import sqlite3
-from query_parser import search_query, distinct_query, count_query, delete_query, group_by_query
+from query_parser import (
+    search_query,
+    distinct_query,
+    count_query,
+    delete_query,
+    group_by_query,
+)
 
 import hashlib
 import pickle
@@ -36,6 +42,7 @@ class DefinedIndex:
             "datetime": "NUMBER",
             "other": "BLOB",
         }
+        self.not_allowed_character_in_id = chr(31)
 
         if not db_path == ":memory:":
             db_dir = os.path.dirname(self.db_path).strip()
@@ -114,13 +121,14 @@ class DefinedIndex:
             "(hash INT PRIMARY KEY, pickled BLOB, value_type TEXT)"
         )
 
-        # Populate metadata table
-        for hash_val, pickled, value_type in meta_columns:
-            self._connection.execute(
-                f"INSERT INTO {self.meta_table_name} (hash, pickled, value_type) "
-                f"VALUES (?, ?, ?)",
-                (hash_val, sqlite3.Binary(pickled), value_type),
-            )
+        self._connection.executemany(
+            f"INSERT OR IGNORE INTO {self.meta_table_name} (hash, pickled, value_type) "
+            f"VALUES (?, ?, ?)",
+            [
+                (hash_val, sqlite3.Binary(pickled), value_type)
+                for hash_val, pickled, value_type in meta_columns
+            ],
+        )
 
         self._connection.commit()
 
@@ -136,6 +144,10 @@ class DefinedIndex:
 
         # Iterate through each item in the data
         for k, _data in data.items():
+            if self.not_allowed_character_in_id in k:
+                raise ValueError(
+                    f"Invalid character '{self.not_allowed_character_in_id}' in id: {k}"
+                )
             # Create a new dictionary to store processed (hashed key) data
             processed_data = {h: None for h in all_columns}
             processed_data["id"] = k
@@ -255,7 +267,7 @@ class DefinedIndex:
             results[_id] = record
 
         return results
-    
+
     def distinct(self, key, query):
         sql_query, sql_params = distinct_query(
             table_name=self.name,
@@ -264,17 +276,50 @@ class DefinedIndex:
             schema=self.hashed_key_schema,
         )
 
-        return self._connection.execute(sql_query, sql_params).fetchall()
-    
-    def group(self, key, query):
+        return {
+            _[0] for _ in self._connection.execute(sql_query, sql_params).fetchall()
+        }
+
+    def group(self, keys, query):
+        if isinstance(keys, str):
+            keys = [keys]
+
         sql_query, sql_params = group_by_query(
             table_name=self.name,
-            column=self.original_key_to_key_hash[key],
+            columns=[self.original_key_to_key_hash[key] for key in keys],
             query={self.original_key_to_key_hash[k]: v for k, v in query.items()},
             schema=self.hashed_key_schema,
         )
 
-        return self._connection.execute(sql_query, sql_params).fetchall()
+        return {
+            _[0]: _[1].split(self.not_allowed_character_in_id)
+            for _ in self._connection.execute(sql_query, sql_params).fetchall()
+        }
+
+    def delete(self, ids, query=None):
+        if query:
+            sql_query, sql_params = delete_query(
+                table_name=self.name,
+                query={self.original_key_to_key_hash[k]: v for k, v in query.items()},
+                schema=self.hashed_key_schema,
+            )
+
+            self._connection.execute(sql_query, sql_params)
+            self._connection.commit()
+        if ids:
+            placeholders = ", ".join(["?" for _ in ids])
+            sql_query = f"DELETE FROM {self.name} WHERE id IN ({placeholders})"
+            self._connection.execute(sql_query, ids)
+            self._connection.commit()
+
+    def count(self, query):
+        sql_query, sql_params = count_query(
+            table_name=self.name,
+            query={self.original_key_to_key_hash[k]: v for k, v in query.items()},
+            schema=self.hashed_key_schema,
+        )
+
+        return self._connection.execute(sql_query, sql_params).fetchone()[0]
 
 
 if __name__ == "__main__":
@@ -313,10 +358,48 @@ if __name__ == "__main__":
         }
     )
 
+    index.update(
+        {
+            "user3": {
+                "name": "John Doe",
+                "age": 25,
+                "password": "password123",
+                "verified": True,
+                "nicknames": ["John", "Johnny"],
+                "address_details": {
+                    "city": "New York",
+                    "state": "New York",
+                    "country": "USA",
+                },
+                "profile_picture": b"some binary data here",
+            },
+            "user4": {
+                "name": "Jane Doe",
+                "age": 22,
+            },
+        }
+    )
+
     # print(index.get("user1", "user2", "user3"))
 
     print(index.search(query={"age": {"$gt": 20}}))
 
     print(index.distinct(key="name", query={"age": {"$gt": 20}}))
 
-    print(index.group(key="name", query={"age": {"$gt": 20}}))
+    print(index.group(keys="name", query={"age": {"$gt": 20}}))
+
+    print(index.count(query={"age": {"$gt": 20}}))
+
+    index.delete(ids=["user1", "user2"])
+
+    print(index.group(keys="name", query={"age": {"$gt": 20}}))
+
+    print(index.count(query={"age": {"$gt": 20}}))
+
+    index.clear()
+
+    print(index.count(query={"age": {"$gt": 20}}))
+
+    index.drop()
+
+    print(index.count(query={"age": {"$gt": 20}}))
