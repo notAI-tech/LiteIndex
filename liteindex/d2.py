@@ -13,8 +13,9 @@ from query_parser import (
     group_by_query,
 )
 
-import hashlib
 import pickle
+import hashlib
+import threading
 
 
 def stable_hash(obj):
@@ -52,15 +53,28 @@ class DefinedIndex:
             if not os.path.exists(db_dir):
                 os.makedirs(db_dir, exist_ok=True)
 
-        self._connection = sqlite3.connect(self.db_path, uri=True)
-
-        self._connection.execute("PRAGMA journal_mode=WAL")
-        self._connection.execute("PRAGMA synchronous=NORMAL")
+        self.local_storage = threading.local()
 
         self._validate_set_schema_if_exists()
         self._parse_schema()
 
         self._create_table_and_meta_table()
+
+    def __del__(self):
+        if self._connection:
+            self._connection.close()
+            self._connection = None
+
+    @property
+    def _connection(self):
+        if (
+            not hasattr(self.local_storage, "db_conn")
+            or self.local_storage.db_conn is None
+        ):
+            self.local_storage.db_conn = sqlite3.connect(self.db_path, uri=True)
+            self.local_storage.db_conn.execute("PRAGMA journal_mode=WAL")
+            self.local_storage.db_conn.execute("PRAGMA synchronous=NORMAL")
+        return self.local_storage.db_conn
 
     def _validate_set_schema_if_exists(self):
         try:
@@ -172,16 +186,19 @@ class DefinedIndex:
         self._connection.executemany(sql, transactions)
         self._connection.commit()
 
-    def get(self, *args):
+    def get(self, ids):
+        if isinstance(ids, str):
+            ids = [ids]
+
         # Prepare the SQL command
         columns = ", ".join([f'"{h}"' for h in self.original_key_to_key_hash.values()])
         column_str = "id, " + columns  # Update this to include `id`
 
         # Format the ids for the where clause
-        id_placeholders = ", ".join(["?" for _ in args])
+        id_placeholders = ", ".join(["?" for _ in ids])
         sql = f"SELECT {column_str} FROM {self.name} WHERE id IN ({id_placeholders})"
 
-        cursor = self._connection.execute(sql, args)
+        cursor = self._connection.execute(sql, ids)
 
         result = {}
         for row in cursor.fetchall():
@@ -199,6 +216,9 @@ class DefinedIndex:
                     record[k] = datetime.datetime.fromtimestamp(v)
                 elif self.schema[k] == "json":
                     record[k] = json.loads(v)
+                elif self.schema[k] == "boolean":
+                    record[k] = bool(v)
+
             result[row[0]] = record
         return result
 
@@ -296,7 +316,7 @@ class DefinedIndex:
             for _ in self._connection.execute(sql_query, sql_params).fetchall()
         }
 
-    def delete(self, ids, query=None):
+    def delete(self, ids=None, query=None):
         if query:
             sql_query, sql_params = delete_query(
                 table_name=self.name,
@@ -306,11 +326,16 @@ class DefinedIndex:
 
             self._connection.execute(sql_query, sql_params)
             self._connection.commit()
-        if ids:
+        elif ids:
+            if isinstance(ids, str):
+                ids = [ids]
+
             placeholders = ", ".join(["?" for _ in ids])
             sql_query = f"DELETE FROM {self.name} WHERE id IN ({placeholders})"
             self._connection.execute(sql_query, ids)
             self._connection.commit()
+        else:
+            raise ValueError("Either ids or query must be provided")
 
     def count(self, query):
         sql_query, sql_params = count_query(
@@ -383,6 +408,8 @@ if __name__ == "__main__":
     # print(index.get("user1", "user2", "user3"))
 
     print(index.search(query={"age": {"$gt": 20}}))
+
+    print("Get:", index.get(["user1", "user2", "user3"]))
 
     print(index.distinct(key="name", query={"age": {"$gt": 20}}))
 
