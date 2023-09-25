@@ -100,7 +100,10 @@ index.delete(["john_doe", "jane_doe"])
 
 ### Drop or clear Index
 ```python
+# clear the index
 index.clear()
+
+# drop/ delete the index completely
 index.drop()
 ```
 
