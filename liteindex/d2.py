@@ -1,3 +1,7 @@
+import common_utils
+
+common_utils.set_ulimit()
+
 import re
 import os
 import time
@@ -13,13 +17,7 @@ from query_parser import (
     group_by_query,
 )
 
-import pickle
-import hashlib
 import threading
-
-
-def stable_hash(obj):
-    return hashlib.sha256(pickle.dumps(obj)).hexdigest()
 
 
 class DefinedIndex:
@@ -109,7 +107,7 @@ class DefinedIndex:
         for key, value_type in self.schema.items():
             if value_type not in self.schema_property_to_column_type:
                 raise ValueError(f"Invalid schema property: {value_type}")
-            key_hash = stable_hash(key)
+            key_hash = common_utils.stable_hash(key)
             self.key_hash_to_original_key[key_hash] = key
             self.original_key_to_key_hash[key] = key_hash
             self.hashed_key_schema[key_hash] = value_type
@@ -337,7 +335,7 @@ class DefinedIndex:
         else:
             raise ValueError("Either ids or query must be provided")
 
-    def count(self, query):
+    def count(self, query={}):
         sql_query, sql_params = count_query(
             table_name=self.name,
             query={self.original_key_to_key_hash[k]: v for k, v in query.items()},
@@ -409,13 +407,13 @@ if __name__ == "__main__":
 
     print(index.search(query={"age": {"$gt": 20}}))
 
-    print("Get:", index.get(["user1", "user2", "user3"]))
+    print("Get:", index.get(["user1", "user2", "user3", "user4"]))
 
     print(index.distinct(key="name", query={"age": {"$gt": 20}}))
 
     print(index.group(keys="name", query={"age": {"$gt": 20}}))
 
-    print(index.count(query={"age": {"$gt": 20}}))
+    print(index.count(query={"age": {"$gt": 20}}), index.count())
 
     index.delete(ids=["user1", "user2"])
 
@@ -425,7 +423,7 @@ if __name__ == "__main__":
 
     index.clear()
 
-    print(index.count(query={"age": {"$gt": 20}}))
+    print(index.count(query={"age": {"$gt": 20}}), index.count())
 
     index.drop()
 
