@@ -20,7 +20,7 @@
 - An in-memory index cannot be accessed from other processes and threads
 - If `db_path` is specified, disk-based index is initiated which is accessible from all processes, threads and is persistent
 
-### Initialize DefinedIndex
+### Initialize
 ```python
 from liteindex import DefinedIndex
 
@@ -51,7 +51,7 @@ index = DefinedIndex(
         )
 ```
 
-### Insert/Update data
+### Insert/Update
 ```python
 # Set a single or multiple, partial or full records.
 index.update(
@@ -79,7 +79,7 @@ index.update(
 )
 ```
 
-### Get Data
+### Get
 ```python
 # get a single or multiple records
 # a dict of format {key: record} is returned
@@ -90,12 +90,13 @@ index.get(["john_doe", "jane_doe"])
 # {"john_doe": record_for_john_doe, "jane_doe": record_for_jane_doe}
 ```
 
-### Delete Data
+### Delete
 ```python
-# delete a single record or multiple records
+# delete a single record or multiple records or by query
 # returns dict of format {key: record} of deleted records
 index.delete("john_doe")
 index.delete(["john_doe", "jane_doe"])
+index.delete(query={"name": "John Doe"})
 ```
 
 ### Drop or clear Index
@@ -134,3 +135,11 @@ index.search(
     select_keys=["name", "age"]
 )
 ```
+
+### Distinct
+
+### Group by
+
+### Count
+
+
