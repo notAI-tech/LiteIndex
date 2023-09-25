@@ -13,6 +13,13 @@
 | other   | use for any other type of objects that are not in the ones above        |
 
 
+- A schema has to be specified at first initialisation of the index
+- schema cannot be modified later on
+- keys in schema can be anything that can be keys in a python dict. eg: `schema_1 = {0: "string", "a": "number"}`
+- id of the records has to be a string. eg: `index.set({"a": {0: "0"}}) is allowed` but `index.set({0: {0: "0"}}) is not allowed`
+- An in-memory index cannot be accessed from other processes and threads
+- If `db_path` is specified, disk-based index is initiated which is accessible from all processes, threads and is persistent
+
 ### Initialize DefinedIndex
 ```python
 from liteindex import DefinedIndex
@@ -78,16 +85,17 @@ index.update(
 # a dict of format {key: record} is returned
 # if a key is not found, it won't be in the returned dict
 index.get("john_doe")
-index.get("john_doe", "jane_doe")
+# {"john_doe": record_for_john_doe}
+index.get(["john_doe", "jane_doe"])
+# {"john_doe": record_for_john_doe, "jane_doe": record_for_jane_doe}
 ```
 
 ### Delete Data
 ```python
 # delete a single record or multiple records
 # returns dict of format {key: record} of deleted records
-index.delete("john_doe", return_deleted=True)
-# returns dict of format {key: {}}
-index.delete("john_doe", "jane_doe", return_deleted=False)
+index.delete("john_doe")
+index.delete(["john_doe", "jane_doe"])
 ```
 
 ### Drop or clear Index
