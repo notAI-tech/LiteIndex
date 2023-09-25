@@ -137,9 +137,24 @@ index.search(
 ```
 
 ### Distinct
+```python
+index.distinct("name")
+index.distinct("name", query={"gender": "female"})
+```
 
 ### Group by
+``` python
+index.group()
+```
 
 ### Count
+``` python
+index.count()
+index.count({"name": "Joe Biden"})
+```
 
+### Optimize for Search
+```python
+index.optimize_for()
+```
 
