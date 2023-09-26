@@ -203,6 +203,70 @@ def delete_query(table_name, query, schema):
     return query_str, params
 
 
+def sum_query(table_name, column, query, schema):
+    if column not in schema:
+        raise ValueError(f"Invalid column '{column}' specified for sum")
+    if schema[column] != "number":
+        raise ValueError("Sum operation can only be applied on numeric columns")
+
+    # Prepare the query
+    where_conditions, params = parse_query(query, schema)
+
+    # Build the query string
+    query_str = f"SELECT SUM({column}) FROM {table_name}"
+    if where_conditions:
+        query_str += f" WHERE {' AND '.join(where_conditions)}"
+
+    return query_str, params
+
+
+def avg_query(table_name, column, query, schema):
+    if column not in schema:
+        raise ValueError(f"Invalid column '{column}' specified for average")
+    if schema[column] != "number":
+        raise ValueError("Average operation can only be applied on numeric columns")
+
+    # Prepare the query
+    where_conditions, params = parse_query(query, schema)
+
+    # Build the query string
+    query_str = f"SELECT AVG({column}) FROM {table_name}"
+    if where_conditions:
+        query_str += f" WHERE {' AND '.join(where_conditions)}"
+
+    return query_str, params
+
+
+def min_query(table_name, column, query, schema):
+    if column not in schema:
+        raise ValueError(f"Invalid column '{column}' specified for minimum")
+
+    # Prepare the query
+    where_conditions, params = parse_query(query, schema)
+
+    # Build the query string
+    query_str = f"SELECT MIN({column}) FROM {table_name}"
+    if where_conditions:
+        query_str += f" WHERE {' AND '.join(where_conditions)}"
+
+    return query_str, params
+
+
+def max_query(table_name, column, query, schema):
+    if column not in schema:
+        raise ValueError(f"Invalid column '{column}' specified for maximum")
+
+    # Prepare the query
+    where_conditions, params = parse_query(query, schema)
+
+    # Build the query string
+    query_str = f"SELECT MAX({column}) FROM {table_name}"
+    if where_conditions:
+        query_str += f" WHERE {' AND '.join(where_conditions)}"
+
+    return query_str, params
+
+
 if __name__ == "__main__":
     import unittest
     import json
@@ -214,7 +278,7 @@ if __name__ == "__main__":
                 "name": "string",
                 "tags_list": "json",
                 "tag_id_to_name": "json",
-                "is_true": "INTEGER",
+                "is_true": "boolean",
             }
 
         def test_single_condition(self):
@@ -461,4 +525,6 @@ if __name__ == "__main__":
             )
             self.assertEqual(params, ["John", "%a%"])
 
+
+if __name__ == "__main__":
     unittest.main()

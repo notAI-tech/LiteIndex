@@ -16,16 +16,39 @@ from query_parser import (
     count_query,
     delete_query,
     group_by_query,
+    max_query,
+    avg_query,
+    min_query,
+    sum_query,
 )
 
 import threading
 
+
 class DefinedIndex:
-    def __init__(self, name, schema=None, db_path=":memory:"):
+    def __init__(self, name, schema=None, example=None, db_path=":memory:"):
         if name.startswith("__"):
             raise ValueError("Index name cannot start with '__'")
 
         self.name = name
+        if not schema and example:
+            schema = {}
+            for k, v in example.items():
+                if isinstance(v, bool):
+                    schema[k] = "boolean"
+                elif isinstance(v, int) or isinstance(v, float):
+                    schema[k] = "number"
+                elif isinstance(v, str):
+                    schema[k] = "string"
+                elif isinstance(v, dict) or isinstance(v, list):
+                    schema[k] = "json"
+                elif isinstance(v, bytes):
+                    schema[k] = "blob"
+                elif isinstance(v, datetime.datetime):
+                    schema[k] = "datetime"
+                else:
+                    schema[k] = "other"
+
         self.schema = schema
         self.hashed_key_schema = {}
         self.meta_table_name = f"__{name}_meta"
@@ -127,10 +150,14 @@ class DefinedIndex:
             f"CREATE TABLE IF NOT EXISTS {self.name} (id TEXT PRIMARY KEY, updated_at NUMBER, {columns_str})"
         )
 
+        self._connection.execute(
+            f"CREATE INDEX IF NOT EXISTS idx_{self.name}_updated_at ON {self.name} (updated_at)"
+        )
+
         # Create the metadata table
         self._connection.execute(
             f"CREATE TABLE IF NOT EXISTS {self.meta_table_name} "
-            "(hash INT PRIMARY KEY, pickled BLOB, value_type TEXT)"
+            "(hash TEXT PRIMARY KEY, pickled BLOB, value_type TEXT)"
         )
 
         self._connection.executemany(
@@ -344,6 +371,59 @@ class DefinedIndex:
 
         return self._connection.execute(sql_query, sql_params).fetchone()[0]
 
+    def optimize_key_for_querying(self, key, is_unique=False):
+        if self.schema[key] in {"string", "number", "boolean", "datetime"}:
+            key_hash = self.original_key_to_key_hash[key]
+            if not is_unique:
+                self._connection.execute(
+                    f"CREATE INDEX IF NOT EXISTS idx_{self.name}_{key_hash} ON {self.name} ({key_hash})"
+                )
+            else:
+                self._connection.execute(
+                    f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{self.name}_{key_hash} ON {self.name} ({key_hash})"
+                )
+
+            self._connection.commit()
+        else:
+            raise ValueError(
+                f"Cannot optimize for querying on {key}. Only string, number, boolean and datetime types are supported"
+            )
+
+    def querying_optimized_keys(self):
+        return {
+            k: v
+            for k, v in {
+                self.key_hash_to_original_key.get(
+                    _[1].replace(f"idx_{self.name}_", "")
+                ): {"is_unique": bool(_[2])}
+                for _ in self._connection.execute(
+                    f"PRAGMA index_list({self.name})"
+                ).fetchall()
+                if _[1].startswith(f"idx_{self.name}_")
+            }.items()
+            if k and v
+        }
+
+    def math(self, key, op, query={}):
+        if op not in {"sum", "avg", "min", "max"}:
+            raise ValueError("Invalid operation")
+
+        op_func = {
+            "sum": sum_query,
+            "avg": avg_query,
+            "min": min_query,
+            "max": max_query,
+        }[op]
+
+        sql_query, sql_params = op_func(
+            table_name=self.name,
+            column=self.original_key_to_key_hash[key],
+            query={self.original_key_to_key_hash[k]: v for k, v in query.items()},
+            schema=self.hashed_key_schema,
+        )
+
+        return self._connection.execute(sql_query, sql_params).fetchone()[0]
+
 
 if __name__ == "__main__":
     schema = {
@@ -401,6 +481,16 @@ if __name__ == "__main__":
                 "age": 22,
             },
         }
+    )
+
+    print("-->", index.querying_optimized_keys())
+    index.optimize_key_for_querying("name")
+    print("-->", index.querying_optimized_keys())
+
+    print(
+        "---->",
+        index.math("age", "sum", query={"age": {"$gt": 20}}),
+        index.math("age", "sum", query={"age": {"$gt": 60}}),
     )
 
     # print(index.get("user1", "user2", "user3"))
