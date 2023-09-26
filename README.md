@@ -1,5 +1,13 @@
 # LiteIndex
-in-process, easy to use, query-able object storage implenetations based on sqlite
+in-process, thread and process safe, easy to use, query-able object storage implenetation for Python
+
+### Some use cases, benchmarks and examples:
+- cache for a python function
+- store and query large number of records without using up memory
+- ultra-fast, query-able file storage (faster than creating files on disk and way better for querying)
+- exchange data between threads or processes easily
+- store application data locally in easy to query and stable format
+
 
 
 ```python
@@ -38,3 +46,9 @@ index = DefinedIndex(
         )
 ```
 - [DefinedIndex Documentation](https://github.com/notAI-tech/LiteIndex/blob/main/DefinedIndex.md)
+
+
+## AnyIndex (***In development***)
+
+- Like mongodb, any python dict can be inserted at run time
+- Doesn't need pre-defined structure unlike DefinedIndex
