@@ -26,11 +26,12 @@ import threading
 
 
 class DefinedIndex:
-    def __init__(self, name, schema=None, example=None, db_path=":memory:"):
+    def __init__(self, name, schema=None, example=None, db_path=":memory:", memory_limit=64):
         if name.startswith("__"):
             raise ValueError("Index name cannot start with '__'")
 
         self.name = name
+        self.memory_limit = memory_limit
         if not schema and example:
             schema = {}
             for k, v in example.items():
@@ -80,6 +81,7 @@ class DefinedIndex:
         self._parse_schema()
 
         self._create_table_and_meta_table()
+        self.column_names = []
 
     def __del__(self):
         if self._connection:
@@ -95,6 +97,8 @@ class DefinedIndex:
             self.local_storage.db_conn = sqlite3.connect(self.db_path, uri=True)
             self.local_storage.db_conn.execute("PRAGMA journal_mode=WAL")
             self.local_storage.db_conn.execute("PRAGMA synchronous=NORMAL")
+            self.local_storage.db_conn.execute(f"PRAGMA cache_size=-{self.memory_limit}") # Set cache size to 64MB
+
         return self.local_storage.db_conn
 
     def _validate_set_schema_if_exists(self):
@@ -141,8 +145,15 @@ class DefinedIndex:
         for key, value_type in self.schema.items():
             key_hash = self.original_key_to_key_hash[key]
             sql_column_type = self.schema_property_to_column_type[value_type]
+            if value_type == "blob":
+                columns.append(f'"__size_{key_hash}" NUMBER')
+                self.column_names.append(f"__size_{key_hash}")
+                columns.append(f'"__hash_{key_hash}" TEXT')
+                self.column_names.append(f"__hash_{key_hash}")
+
             columns.append(f'"{key_hash}" {sql_column_type}')
             meta_columns.append((key_hash, pickle.dumps(key), value_type))
+            self.column_names.append(key_hash)
 
         columns_str = ", ".join(columns)
 
@@ -202,6 +213,14 @@ class DefinedIndex:
                     value = value.timestamp()
                 elif self.schema[key] == "json":
                     value = json.dumps(value)
+                elif self.schema[key] == "boolean":
+                    value = int(value)
+                elif self.schema[key] == "blob":
+                    value = sqlite3.Binary(value)
+                    processed_data[f"__size_{key_hash}"] = len(value)
+                    processed_data[f"__hash_{key_hash}"] = common_utils.hash_bytes(
+                        value
+                    )
 
                 processed_data[key_hash] = value
 
@@ -223,10 +242,8 @@ class DefinedIndex:
         id_placeholders = ", ".join(["?" for _ in ids])
         sql = f"SELECT {column_str} FROM {self.name} WHERE id IN ({id_placeholders})"
 
-        cursor = self._connection.execute(sql, ids)
-
         result = {}
-        for row in cursor.fetchall():
+        for row in self._connection.execute(sql, ids).fetchall():
             record = {
                 self.key_hash_to_original_key[h]: val
                 for h, val in zip(self.original_key_to_key_hash.values(), row[1:])
