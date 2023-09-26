@@ -7,8 +7,9 @@ import os
 import time
 import json
 import pickle
-import datetime
 import sqlite3
+import datetime
+
 from query_parser import (
     search_query,
     distinct_query,
@@ -18,7 +19,6 @@ from query_parser import (
 )
 
 import threading
-
 
 class DefinedIndex:
     def __init__(self, name, schema=None, db_path=":memory:"):
