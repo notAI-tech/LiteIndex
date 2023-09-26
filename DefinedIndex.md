@@ -155,6 +155,6 @@ index.count({"name": "Joe Biden"})
 
 ### Optimize for Search
 ```python
-index.optimize_for()
+index.optimize_for_query()
 ```
 
