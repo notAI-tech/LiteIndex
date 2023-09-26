@@ -20,7 +20,8 @@ pip install --upgrade liteindex
 - `schema` has to be specified when creating a new DefinedIndex
 - Any python object can be stored in DefinedIndex
 - Querying can be done on `string`, `number`, `boolean`, `json`, `datetime` fields.
-- `blob` and `other` values can only be set, deleted, updated. Cannot be queried upon.
+- `blob` values can be queried for equality (same file), size.
+- `other` values can only be set, deleted, updated. Cannot be queried upon.
 - Insertion order is preserved 
 
 ```python
