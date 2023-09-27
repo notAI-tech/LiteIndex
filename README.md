@@ -21,6 +21,7 @@ pip install --upgrade liteindex
 - [Documentation](https://github.com/notAI-tech/LiteIndex/blob/main/DefinedIndex.md)
 - `schema` has to be specified when creating a new DefinedIndex
 - Any python object can be stored in DefinedIndex
+- Query language is copy of mongodb queries. All queries are documented.
 - Querying can be done on `string`, `number`, `boolean`, `json`, `datetime` fields.
 - Math can be done on `number` fields
 - `blob` values can be queried for equality (same file), size.
