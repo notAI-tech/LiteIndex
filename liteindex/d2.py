@@ -20,6 +20,12 @@ from query_parser import (
     avg_query,
     min_query,
     sum_query,
+    plus_equals_query,
+    minus_equals_query,
+    multiply_equals_query,
+    divide_equals_query,
+    floor_divide_equals_query,
+    modulo_equals_query,
 )
 
 import threading
@@ -358,6 +364,9 @@ class DefinedIndex:
             for _ in self._connection.execute(sql_query, sql_params).fetchall()
         }
 
+    def pop(self, n, query={}, sort_by="updated_at", reversed_sort=True, first=False, last=False):
+        pass
+
     def delete(self, ids=None, query=None):
         if query:
             sql_query, sql_params = delete_query(
@@ -422,7 +431,7 @@ class DefinedIndex:
         }
 
     def math(self, key, op, query={}):
-        if op not in {"sum", "avg", "min", "max"}:
+        if op not in {"sum", "avg", "min", "max", "+=", "-=", "*=", "/=", "//=", "%="}:
             raise ValueError("Invalid operation")
 
         op_func = {
@@ -430,6 +439,12 @@ class DefinedIndex:
             "avg": avg_query,
             "min": min_query,
             "max": max_query,
+            "+=": plus_equals_query,
+            "-=": minus_equals_query,
+            "*=": multiply_equals_query,
+            "/=": divide_equals_query,
+            "//=": floor_divide_equals_query,
+            "%=": modulo_equals_query,
         }[op]
 
         sql_query, sql_params = op_func(

@@ -266,6 +266,36 @@ def max_query(table_name, column, query, schema):
 
     return query_str, params
 
+def plus_equals_query(table_name, column, value):
+    query_str = f"UPDATE {table_name} SET {column} = {column} + ? WHERE {column} = ?"
+    params = (value, column)
+    return query_str, params
+
+def minus_equals_query(table_name, column, value):
+    query_str = f"UPDATE {table_name} SET {column} = {column} - ? WHERE {column} = ?"
+    params = (value, column)
+    return query_str, params
+
+def multiply_equals_query(table_name, column, value):
+    query_str = f"UPDATE {table_name} SET {column} = {column} * ? WHERE {column} = ?"
+    params = (value, column)
+    return query_str, params
+
+def divide_equals_query(table_name, column, value):
+    query_str = f"UPDATE {table_name} SET {column} = {column} / ? WHERE {column} = ?"
+    params = (value, column)
+    return query_str, params
+
+def floor_divide_equals_query(table_name, column, value):
+    query_str = f"UPDATE {table_name} SET {column} = {column} // ? WHERE {column} = ?"
+    params = (value, column)
+    return query_str, params
+
+def modulo_equals_query(table_name, column, value):
+    query_str = f"UPDATE {table_name} SET {column} = {column} % ? WHERE {column} = ?"
+    params = (value, column)
+    return query_str, params
+
 
 if __name__ == "__main__":
     import unittest
