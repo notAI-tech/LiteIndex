@@ -7,7 +7,8 @@ in-process, thread and process safe, easy to use, query-able object storage impl
 - ultra-fast, query-able file storage (faster than creating files on disk and way better for querying)
 - exchange data between threads or processes easily
 - store application data locally in easy to query and stable format
-- Trigger threads/ processes with your custom functions on any specific updates or deletes (combined with gevent or ray, this allows for a extremely easy to use and deploy lambda like pipeline)
+- Trigger threads/ processes with your custom functions on any specific updates or deletes (combined with gevent or ray, this allows for a extremely easy to use and deploy sqs + lambda like pipeline)
+
 
 
 
