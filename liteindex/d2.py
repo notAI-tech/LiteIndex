@@ -293,9 +293,16 @@ class DefinedIndex:
         if {
             k
             for k in query
-            if k not in self.schema or self.schema[k] in {"blob", "other"}
+            if k not in self.schema or self.schema[k] in {"other"}
         }:
             raise ValueError("Invalid query")
+        
+        if sort_by not in self.schema or self.schema[sort_by] in {"other", "string", "json"}:
+            raise ValueError("Invalid sort_by")
+        
+        if self.schema[sort_by] == "blob":
+            sort_by = f"__size_{self.original_key_to_key_hash[sort_by]}"
+        
 
         sql_query, sql_params = search_query(
             table_name=self.name,
@@ -364,7 +371,7 @@ class DefinedIndex:
             for _ in self._connection.execute(sql_query, sql_params).fetchall()
         }
 
-    def pop(self, n, query={}, sort_by="updated_at", reversed_sort=True, first=False, last=False):
+    def pop(self, n, query={}, sort_by="updated_at", reversed_sort=True):
         pass
 
     def delete(self, ids=None, query=None):
@@ -455,6 +462,9 @@ class DefinedIndex:
         )
 
         return self._connection.execute(sql_query, sql_params).fetchone()[0]
+    
+    def trigger(self):
+        pass
 
 
 if __name__ == "__main__":
