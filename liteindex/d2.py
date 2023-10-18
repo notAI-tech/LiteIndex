@@ -32,7 +32,7 @@ import threading
 
 
 class DefinedIndex:
-    def __init__(self, name, schema=None, example=None, db_path=":memory:", memory_limit=64):
+    def __init__(self, name, schema=None, example=None, from_csv=None, load_data_from_csv=True, db_path=":memory:", memory_limit=64):
         if name.startswith("__"):
             raise ValueError("Index name cannot start with '__'")
 
@@ -55,6 +55,9 @@ class DefinedIndex:
                     schema[k] = "datetime"
                 else:
                     schema[k] = "other"
+        
+        if not schema and from_csv:
+            pass
 
         self.schema = schema
         self.hashed_key_schema = {}
@@ -88,6 +91,9 @@ class DefinedIndex:
 
         self._create_table_and_meta_table()
         self.column_names = []
+
+        if from_csv and load_data_from_csv:
+            pass
 
     def __del__(self):
         if self._connection:
