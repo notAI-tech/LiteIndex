@@ -1,4 +1,4 @@
-import common_utils
+from . import common_utils
 
 common_utils.set_ulimit()
 
@@ -10,7 +10,7 @@ import pickle
 import sqlite3
 import datetime
 
-from query_parser import (
+from .query_parser import (
     search_query,
     distinct_query,
     count_query,

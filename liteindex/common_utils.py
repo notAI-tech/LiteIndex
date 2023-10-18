@@ -23,12 +23,14 @@ import hashlib
 def stable_hash(obj):
     return hashlib.sha256(pickle.dumps(obj)).hexdigest()
 
+
 # ----------- Hash for bytes -----------
-'''
+"""
 handle large bytes as well by usin 2048 bytes chunks
-'''
+"""
 
 import hashlib
+
 
 def hash_bytes(data):
     hash_obj = hashlib.sha256(data)
