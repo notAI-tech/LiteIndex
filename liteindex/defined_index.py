@@ -37,8 +37,8 @@ class DefinedIndex:
         name,
         schema=None,
         example=None,
-        from_csv=None,
-        load_data_from_csv=True,
+        import_from_file=None,
+        file_type=None,
         db_path=":memory:",
         memory_limit=64,
     ):
@@ -65,9 +65,6 @@ class DefinedIndex:
                 else:
                     schema[k] = "other"
 
-        if not schema and from_csv:
-            pass
-
         self.schema = schema
         self.hashed_key_schema = {}
         self.meta_table_name = f"__{name}_meta"
@@ -85,7 +82,6 @@ class DefinedIndex:
             "datetime": "NUMBER",
             "other": "BLOB",
         }
-        self.not_allowed_character_in_id = chr(31)
 
         if not db_path == ":memory:":
             db_dir = os.path.dirname(self.db_path).strip()
@@ -100,9 +96,6 @@ class DefinedIndex:
         self._validate_set_schema_if_exists()
         self._parse_schema()
         self._create_table_and_meta_table()
-
-        if from_csv and load_data_from_csv:
-            pass
 
     def __del__(self):
         if self._connection:
@@ -216,15 +209,17 @@ class DefinedIndex:
 
         # Iterate through each item in the data
         for k, _data in data.items():
-            if self.not_allowed_character_in_id in k:
-                raise ValueError(
-                    f"Invalid character '{self.not_allowed_character_in_id}' in id: {k}"
-                )
             # Create a new dictionary to store processed (hashed key) data
             processed_data = {h: None for h in all_columns}
             processed_data["id"] = k
             processed_data["updated_at"] = time.time()
             for key, value in _data.items():
+                if key not in self.schema:
+                    raise ValueError(f"Key not in schema: {key} for id: {k}")
+
+                if value is None:
+                    continue
+
                 # Get the hashed equivalent of the key
                 key_hash = self.original_key_to_key_hash[key]
 
@@ -384,7 +379,7 @@ class DefinedIndex:
         )
 
         return {
-            _[0]: _[1].split(self.not_allowed_character_in_id)
+            _[0]: _[1].split(chr(31))
             for _ in self._connection.execute(sql_query, sql_params).fetchall()
         }
 
@@ -482,98 +477,3 @@ class DefinedIndex:
 
     def trigger(self):
         pass
-
-
-if __name__ == "__main__":
-    schema = {
-        "name": "string",
-        "age": "number",
-        "password": "string",
-        "verified": "boolean",
-        "nicknames": "json",
-        "address_details": "json",
-        "profile_picture": "blob",
-        "user_vector": "other",
-    }
-
-    index = DefinedIndex(name="user_details", schema=schema)
-
-    index.update(
-        {
-            "user1": {
-                "name": "John Doe",
-                "age": 25,
-                "password": "password123",
-                "verified": True,
-                "nicknames": ["John", "Johnny"],
-                "address_details": {
-                    "city": "New York",
-                    "state": "New York",
-                    "country": "USA",
-                },
-                "profile_picture": b"some binary data here",
-            },
-            "user2": {
-                "name": "Jane Doe",
-                "age": 22,
-            },
-        }
-    )
-
-    index.update(
-        {
-            "user3": {
-                "name": "John Doe",
-                "age": 25,
-                "password": "password123",
-                "verified": True,
-                "nicknames": ["John", "Johnny"],
-                "address_details": {
-                    "city": "New York",
-                    "state": "New York",
-                    "country": "USA",
-                },
-                "profile_picture": b"some binary data here    aaaa bbb",
-            },
-            "user4": {
-                "name": "Jane Doe",
-                "age": 22,
-            },
-        }
-    )
-
-    print("-->", index.list_optimized_keys())
-    index.optimize_key_for_querying("name")
-    print("-->", index.list_optimized_keys())
-
-    print(
-        "---->",
-        index.math("age", "sum", query={"age": {"$gt": 20}}),
-        index.math("age", "sum", query={"age": {"$gt": 60}}),
-    )
-
-    # print(index.get("user1", "user2", "user3"))
-
-    print(index.search(query={"age": {"$gt": 20}}))
-
-    print("Get:", index.get(["user1", "user2", "user3", "user4"]))
-
-    print(index.distinct(key="name", query={"age": {"$gt": 20}}))
-
-    print(index.group(keys="name", query={"age": {"$gt": 20}}))
-
-    print(index.count(query={"age": {"$gt": 20}}), index.count())
-
-    index.delete(ids=["user1", "user2"])
-
-    print(index.group(keys="name", query={"age": {"$gt": 20}}))
-
-    print(index.count(query={"age": {"$gt": 20}}))
-
-    index.clear()
-
-    print(index.count(query={"age": {"$gt": 20}}), index.count())
-
-    index.drop()
-
-    print(index.count(query={"age": {"$gt": 20}}))
