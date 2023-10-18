@@ -1,463 +1,579 @@
+import common_utils
+
+common_utils.set_ulimit()
+
 import re
 import os
+import time
 import json
 import pickle
 import sqlite3
-from .query_parser import search_query, distinct_query, count_query, delete_query
+import datetime
+
+from query_parser import (
+    search_query,
+    distinct_query,
+    count_query,
+    delete_query,
+    group_by_query,
+    max_query,
+    avg_query,
+    min_query,
+    sum_query,
+    plus_equals_query,
+    minus_equals_query,
+    multiply_equals_query,
+    divide_equals_query,
+    floor_divide_equals_query,
+    modulo_equals_query,
+)
+
+import threading
 
 
 class DefinedIndex:
-    def __init__(self, name, schema=None, db_path=":memory:", auto_key=False):
+    def __init__(
+        self,
+        name,
+        schema=None,
+        example=None,
+        from_csv=None,
+        load_data_from_csv=True,
+        db_path=":memory:",
+        memory_limit=64,
+    ):
+        if name.startswith("__"):
+            raise ValueError("Index name cannot start with '__'")
+
         self.name = name
+        self.memory_limit = memory_limit
+        if not schema and example:
+            schema = {}
+            for k, v in example.items():
+                if isinstance(v, bool):
+                    schema[k] = "boolean"
+                elif isinstance(v, int) or isinstance(v, float):
+                    schema[k] = "number"
+                elif isinstance(v, str):
+                    schema[k] = "string"
+                elif isinstance(v, dict) or isinstance(v, list):
+                    schema[k] = "json"
+                elif isinstance(v, bytes):
+                    schema[k] = "blob"
+                elif isinstance(v, datetime.datetime):
+                    schema[k] = "datetime"
+                else:
+                    schema[k] = "other"
+
+        if not schema and from_csv:
+            pass
+
+        self.schema = schema
+        self.hashed_key_schema = {}
+        self.meta_table_name = f"__{name}_meta"
         self.db_path = db_path
+        self.key_hash_to_original_key = {}
+        self.original_key_to_key_hash = {}
+        self.column_names = []
+
+        self.schema_property_to_column_type = {
+            "boolean": "INTEGER",
+            "number": "NUMBER",
+            "string": "TEXT",
+            "json": "JSON",
+            "blob": "BLOB",
+            "datetime": "NUMBER",
+            "other": "BLOB",
+        }
+        self.not_allowed_character_in_id = chr(31)
 
         if not db_path == ":memory:":
             db_dir = os.path.dirname(self.db_path).strip()
             if not db_dir:
                 db_dir = "./"
 
-            os.makedirs(db_dir, exist_ok=True)
+            if not os.path.exists(db_dir):
+                os.makedirs(db_dir, exist_ok=True)
 
-        self.auto_key = auto_key
-        self._connection = sqlite3.connect(self.db_path, uri=True)
-        self._connection.row_factory = sqlite3.Row
-        if schema is None:
-            self.schema = self._load_schema_from_table()
+        self.local_storage = threading.local()
+
+        self._validate_set_schema_if_exists()
+        self._parse_schema()
+        self._create_table_and_meta_table()
+
+        if from_csv and load_data_from_csv:
+            pass
+
+    def __del__(self):
+        if self._connection:
+            self._connection.close()
+            self._connection = None
+
+    @property
+    def _connection(self):
+        if (
+            not hasattr(self.local_storage, "db_conn")
+            or self.local_storage.db_conn is None
+        ):
+            self.local_storage.db_conn = sqlite3.connect(self.db_path, uri=True)
+            self.local_storage.db_conn.execute("PRAGMA journal_mode=WAL")
+            self.local_storage.db_conn.execute("PRAGMA synchronous=NORMAL")
+            self.local_storage.db_conn.execute(
+                f"PRAGMA cache_size=-{self.memory_limit}"
+            )  # Set cache size to 64MB
+
+        return self.local_storage.db_conn
+
+    def _validate_set_schema_if_exists(self):
+        try:
+            rows = self._connection.execute(
+                f"SELECT * FROM {self.meta_table_name}"
+            ).fetchall()
+        except:
+            return
+
+        if self.schema is None:
+            self.schema = {}
+
+            for _hash, pickled, value_type in rows:
+                self.key_hash_to_original_key[_hash] = pickle.loads(pickled)
+                self.original_key_to_key_hash[pickle.loads(pickled)] = _hash
+                self.schema[pickle.loads(pickled)] = value_type
         else:
-            self.schema = schema
-            self._validate_schema()
-        self.column_type_map = {
-            key: self._get_column_type(value) for key, value in self.schema.items()
-        }
-
-        self._initialize_db()
-
-    def _initialize_db(self):
-        self._connection.execute("PRAGMA journal_mode=WAL")
-        self._connection.execute("PRAGMA synchronous=NORMAL")
-        self._create_table()
-
-    def _load_schema_from_table(self):
-        cursor = self._connection.cursor()
-        cursor.execute(
-            f"SELECT sql FROM sqlite_master WHERE type='table' AND name='{self.name}'"
-        )
-        result = cursor.fetchone()
-        if result is None:
-            raise ValueError(f"Table {self.name} does not exist in the database")
-        sql = result["sql"]
-        column_defs = re.findall(r"\((.*)\)", sql)[0].split(",")
-        schema = {}
-
-        for column_def in column_defs:
-            column_name, column_type, *rest = column_def.split()
-            if column_name == "id":
-                self.auto_key = "INTEGER" in column_type
-            schema[column_name] = self._get_value_from_column_type(column_type)
-        return schema
-
-    def _get_value_from_column_type(self, column_type):
-        if column_type.startswith("TEXT"):
-            return ""
-        elif column_type == "NUMBER":
-            return 0
-        elif column_type == "JSON":
-            return {}
-        elif column_type == "INTEGER":
-            return False
-        elif column_type == "BLOB":
-            return b""
-        else:
-            raise ValueError(f"Unsupported column type: {column_type}")
-
-    def _validate_schema(self):
-        for key, value in self.schema.items():
-            if key == "id":
-                raise ValueError("The schema should not include an 'id' key.")
-
-            if not isinstance(key, str):
-                raise ValueError(f"Invalid schema key: {key}. Keys must be strings.")
-
-    def _create_table(self):
-        columns = []
-        for key, value in self.schema.items():
-            column_type = self._get_column_type(value)
-            columns.append(f"{key} {column_type}")
-        columns_str = ", ".join(columns)
-        id_column = (
-            "id INTEGER PRIMARY KEY AUTOINCREMENT"
-            if self.auto_key
-            else "id TEXT PRIMARY KEY"
-        )
-        self._connection.execute(
-            f"CREATE TABLE IF NOT EXISTS {self.name} ({id_column}, {columns_str})"
-        )
-        self._connection.commit()
-
-    def _get_column_type(self, value):
-        if isinstance(value, bool):
-            return "INTEGER"  # SQLite does not have a native BOOLEAN type, but INTEGER can store 0 (False) or 1 (True)
-        elif isinstance(value, (int, float)):
-            return "NUMBER"
-        elif isinstance(value, (list, dict)):
-            return "JSON"
-        elif isinstance(value, str):
-            return "TEXT"
-        else:
-            return "BLOB"
-
-    def optimize(self, key_name):
-        if key_name not in self.schema:
-            raise ValueError(f"Invalid key_name: {key_name}. Key not in schema.")
-
-        index_name = f"{self.name}_{key_name}_idx"
-        self._connection.execute(
-            f"CREATE INDEX IF NOT EXISTS {index_name} ON {self.name} ({key_name})"
-        )
-        self._connection.commit()
-
-    def list_optimized_keys(self):
-        cursor = self._connection.cursor()
-        cursor.execute(
-            f"SELECT name, sql FROM sqlite_master WHERE type='index' AND tbl_name='{self.name}'"
-        )
-        results = cursor.fetchall()
-        optimized_keys = []
-        for result in results:
-            index_name = result["name"]
-            index_sql = result["sql"]
-            if index_sql is not None:
-                column_name = re.search(r"\((.*?)\)", index_sql).group(1)
-                optimized_keys.append(column_name)
-        return optimized_keys
-
-    def drop(self):
-        """
-        Drops the table from the database.
-        """
-        query = f"DROP TABLE IF EXISTS {self.name}"
-        self._connection.execute(query)
-        self._connection.commit()
-
-    def add(self, value):
-        if not self.auto_key:
-            raise ValueError("The add function can only be used when auto_key is True")
-
-        if isinstance(value, dict):
-            value_list = [value]
-        elif isinstance(value, list):
-            value_list = value
-        else:
-            raise ValueError("The add function accepts a dict or a list of dicts")
-
-        # Collect all unique keys in a set
-        key_set = set()
-        for item in value_list:
-            key_set.update(item.keys())
-
-        # Cast the set to a list maintaining order
-        keys = list(key_set)
-
-        all_values = []
-        for item in value_list:
-            values = []
-            for key in keys:
-                if key == "id":
+            for _hash, pickled, value_type in rows:
+                if pickle.loads(pickled) not in self.schema:
                     raise ValueError(
-                        "The add function should not include an 'id' key in the input dict"
+                        f"Schema mismatch: {pickle.loads(pickled)} not found in schema"
+                    )
+                if self.schema[pickle.loads(pickled)] != value_type:
+                    raise ValueError(
+                        f"Schema mismatch: {pickle.loads(pickled)} has type {value_type} but {self.schema[pickle.loads(pickled)]} was expected"
                     )
 
-                # Handle missing keys by setting the value to None
-                val = item.get(key, None)
+            if len(self.schema) != len(rows):
+                raise ValueError("existing schema does not match the provided schema")
 
-                if self.column_type_map[key] == "JSON":
-                    val = json.dumps(val)
+    def _parse_schema(self):
+        for key, value_type in self.schema.items():
+            if value_type not in self.schema_property_to_column_type:
+                raise ValueError(f"Invalid schema property: {value_type}")
+            key_hash = common_utils.stable_hash(key)
+            self.key_hash_to_original_key[key_hash] = key
+            self.original_key_to_key_hash[key] = key_hash
+            self.hashed_key_schema[key_hash] = value_type
 
-                elif self.column_type_map[key] == "BLOB":
-                    val = pickle.dumps(val)
+    def _create_table_and_meta_table(self):
+        columns = []
+        meta_columns = []
+        for key, value_type in self.schema.items():
+            key_hash = self.original_key_to_key_hash[key]
+            sql_column_type = self.schema_property_to_column_type[value_type]
+            if value_type == "blob":
+                columns.append(f'"__size_{key_hash}" NUMBER')
+                self.column_names.append(f"__size_{key_hash}")
+                columns.append(f'"__hash_{key_hash}" TEXT')
+                self.column_names.append(f"__hash_{key_hash}")
 
-                values.append(val)
+            columns.append(f'"{key_hash}" {sql_column_type}')
+            meta_columns.append((key_hash, pickle.dumps(key), value_type))
+            self.column_names.append(key_hash)
 
-            all_values.append(values)
+        columns_str = ", ".join(columns)
 
-        keys_str = ", ".join(keys)
-        placeholders_str = ", ".join(["?"] * len(keys))
+        self._connection.execute(
+            f"CREATE TABLE IF NOT EXISTS {self.name} (id TEXT PRIMARY KEY, updated_at NUMBER, {columns_str})"
+        )
 
-        query = f"""
-        INSERT INTO {self.name} ({keys_str})
-        VALUES ({placeholders_str})
-        """
+        self._connection.execute(
+            f"CREATE INDEX IF NOT EXISTS idx_{self.name}_updated_at ON {self.name} (updated_at)"
+        )
 
-        self._connection.executemany(query, all_values)
+        self._connection.execute(
+            f"CREATE TABLE IF NOT EXISTS {self.meta_table_name} "
+            "(hash TEXT PRIMARY KEY, pickled BLOB, value_type TEXT)"
+        )
+
+        self._connection.executemany(
+            f"INSERT OR IGNORE INTO {self.meta_table_name} (hash, pickled, value_type) "
+            f"VALUES (?, ?, ?)",
+            [
+                (hash_val, sqlite3.Binary(pickled), value_type)
+                for hash_val, pickled, value_type in meta_columns
+            ],
+        )
+
         self._connection.commit()
 
-    def set(self, key, value):
-        id = key
-        item = value
-        item["id"] = id
-        keys = []
-        values = []
-        placeholders = []
-        for key, value in item.items():
-            keys.append(key)
+    def update(self, data):
+        transactions = []
 
-            if isinstance(value, (list, dict)):
-                value = json.dumps(value)
+        # Prepare the SQL command
+        all_columns = ["id", "updated_at"]
+        all_columns.extend(self.column_names)
+        columns = ", ".join([f'"{h}"' for h in all_columns])
+        values = ", ".join(["?" for _ in range(len(all_columns))])
+        sql = f"REPLACE INTO {self.name} ({columns}) VALUES ({values})"
 
-            values.append(value)
-            placeholders.append("?")
-        keys_str = ", ".join(keys)
-        placeholders_str = ", ".join(placeholders)
-        update_str = ", ".join([f"{key} = ?" for key in keys])
-
-        query = f"""
-        INSERT INTO {self.name} ({keys_str})
-        VALUES ({placeholders_str})
-        ON CONFLICT(id) DO UPDATE SET {update_str}
-        """
-
-        self._connection.execute(query, values * 2)
-        self._connection.commit()
-
-    def delete(self, x, return_deleted=False):
-        to_del_keys = []
-        to_del_by_query = None
-
-        if isinstance(x, str):
-            to_del_keys = [x]
-        elif isinstance(x, (list, tuple, set)):
-            to_del_keys = list(x)
-        elif isinstance(x, dict):
-            to_del_by_query = x
-
-        to_return = None
-
-        if to_del_keys:
-            if return_deleted:
-                select_query_str = f"SELECT * FROM {self.name} WHERE id IN ({', '.join(['?' for _ in to_del_keys])})"
-                to_return = [
-                    self.__row_to_id_and_item(row)
-                    for row in self._connection.execute(select_query_str, to_del_keys)
-                ]
-
-            delete_query_str = f"DELETE FROM {self.name} WHERE id IN ({', '.join(['?' for _ in to_del_keys])})"
-            self._connection.execute(delete_query_str, to_del_keys)
-            self._connection.commit()
-
-        elif to_del_by_query is not None:
-            if return_deleted:
-                to_return = list(self.search(query=to_del_by_query))
-                to_del_keys = [_ for _, __ in to_return]
-                delete_query_str = f"DELETE FROM {self.name} WHERE id IN ({', '.join(['?' for _ in to_del_keys])})"
-                self._connection.execute(delete_query_str, to_del_keys)
-                self._connection.commit()
-            else:
-                delete_query_str, params = delete_query(
-                    self.name, to_del_by_query, self.column_type_map
+        # Iterate through each item in the data
+        for k, _data in data.items():
+            if self.not_allowed_character_in_id in k:
+                raise ValueError(
+                    f"Invalid character '{self.not_allowed_character_in_id}' in id: {k}"
                 )
-                self._connection.execute(delete_query_str, params)
-                self._connection.commit()
+            # Create a new dictionary to store processed (hashed key) data
+            processed_data = {h: None for h in all_columns}
+            processed_data["id"] = k
+            processed_data["updated_at"] = time.time()
+            for key, value in _data.items():
+                # Get the hashed equivalent of the key
+                key_hash = self.original_key_to_key_hash[key]
 
-        return to_return
+                # Process the value based on its type
+                if self.schema[key] == "other":
+                    value = sqlite3.Binary(pickle.dumps(value))
+                elif self.schema[key] == "datetime":
+                    value = value.timestamp()
+                elif self.schema[key] == "json":
+                    value = json.dumps(value)
+                elif self.schema[key] == "boolean":
+                    value = int(value)
+                elif self.schema[key] == "blob":
+                    value = sqlite3.Binary(value)
+                    processed_data[f"__size_{key_hash}"] = len(value)
+                    processed_data[f"__hash_{key_hash}"] = common_utils.hash_bytes(
+                        value
+                    )
 
-    def get(self, id, *keys):
-        values, params, ids = [], [], []
+                processed_data[key_hash] = value
 
-        if isinstance(id, (list, tuple)):
-            ids = id
-        else:
-            ids = [id]
+            transactions.append(tuple(processed_data.values()))
 
-        if len(keys) == 1:
-            query = f"SELECT id, {keys[0]} FROM {self.name} WHERE id IN ({','.join('?'*len(ids))})"
-            params = (*ids,)
+        self._connection.executemany(sql, transactions)
+        self._connection.commit()
 
-        elif len(keys) > 1:
-            column = keys[0]
-            key_path_parts = []
-            for key in keys[1:]:
-                if isinstance(key, int):
-                    key_path_parts.append(f"[{key}]")
-                else:
-                    key_path_parts.append(f".{key}")
-            key_path = "$" + "".join(key_path_parts)
-            query = f"SELECT id, json_extract({column}, ?) FROM {self.name} WHERE id IN ({','.join('?'*len(ids))})"
-            params = (key_path, *ids)
+    def get(self, ids):
+        if isinstance(ids, str):
+            ids = [ids]
 
-        else:
-            query = f"SELECT id, * FROM {self.name} WHERE id IN ({','.join('?'*len(ids))})"
-            params = (*ids,)
+        # Prepare the SQL command
+        columns = ", ".join([f'"{h}"' for h in self.original_key_to_key_hash.values()])
+        column_str = "id, " + columns  # Update this to include `id`
 
-        cursor = self._connection.execute(query, params)
-        rows = cursor.fetchall()
-        if rows:
-            result_dict = {row[0]: row for row in rows}
+        # Format the ids for the where clause
+        id_placeholders = ", ".join(["?" for _ in ids])
+        sql = f"SELECT {column_str} FROM {self.name} WHERE id IN ({id_placeholders})"
 
-            for i in ids:
-                if i not in result_dict:
-                    raise KeyError(f"ID {i} not found.")
+        result = {}
+        for row in self._connection.execute(sql, ids).fetchall():
+            record = {
+                self.key_hash_to_original_key[h]: val
+                for h, val in zip(self.original_key_to_key_hash.values(), row[1:])
+                if val is not None
+            }
+            for k, v in record.items():
+                if v is None:
+                    continue
+                if self.schema[k] == "other":
+                    record[k] = pickle.loads(v)
+                elif self.schema[k] == "datetime":
+                    record[k] = datetime.datetime.fromtimestamp(v)
+                elif self.schema[k] == "json":
+                    record[k] = json.loads(v)
+                elif self.schema[k] == "boolean":
+                    record[k] = bool(v)
 
-                if len(keys) >= 1 and self.column_type_map.get(keys[0]) == "JSON":
-                    pass
+            result[row[0]] = record
+        return result
 
-                elif len(keys) >= 1 and self.column_type_map.get(keys[0]) == "BLOB":
-                    pass
+    def clear(self):
+        # CLEAR function: deletes the content of the table but keeps the table itself and the metadata table
+        self._connection.execute(f"DROP TABLE IF EXISTS {self.name}")
+        self._create_table_and_meta_table()
 
-                elif not keys:
-                    value = self.__row_to_id_and_item(result_dict[i])[1]
-
-                values.append(value)
-
-        return values if isinstance(id, (list, tuple)) else values[0]
-
-    def __row_to_id_and_item(self, row):
-        item = dict(row)
-        for k, v in item.items():
-            try:
-                item[k] = json.loads(v)
-            except:
-                pass
-
-        return item.pop("id"), item
+    def drop(self):
+        # DROP function: deletes both the table itself and the metadata table
+        self._connection.execute(f"DROP TABLE IF EXISTS {self.name}")
+        self._connection.execute(f"DROP TABLE IF EXISTS {self.meta_table_name}")
+        self._connection.commit()
 
     def search(
         self,
         query={},
-        sort_by=None,
+        sort_by="updated_at",
         reversed_sort=False,
         n=None,
-        page=None,
-        page_size=50,
-        select_columns=None,
+        page_no=None,
+        select_keys=[],
     ):
-        query, params = search_query(
+        if {k for k in query if k not in self.schema or self.schema[k] in {"other"}}:
+            raise ValueError("Invalid query")
+
+        if sort_by != "updated_at":
+            if sort_by not in self.schema or self.schema[sort_by] in {
+                "other",
+                "string",
+                "json",
+            }:
+                raise ValueError("Invalid sort_by")
+
+            if self.schema[sort_by] == "blob":
+                sort_by = f"__size_{self.original_key_to_key_hash[sort_by]}"
+
+        if not select_keys:
+            select_keys = list(self.original_key_to_key_hash)
+
+        sql_query, sql_params = search_query(
             table_name=self.name,
-            query=query,
-            column_type_map=self.column_type_map,
+            query={self.original_key_to_key_hash[k]: v for k, v in query.items()},
+            schema=self.hashed_key_schema,
             sort_by=sort_by,
             reversed_sort=reversed_sort,
             n=n,
-            page=page,
-            page_size=page_size,
-            select_columns=select_columns,
+            page=page_no,
+            page_size=n if page_no else None,
+            select_columns=(
+                ["id", "updated_at"]
+                + [f'"{self.original_key_to_key_hash[k]}"' for k in select_keys]
+            ),
         )
-        cursor = self._connection.execute(query, params)
 
-        def gen():
-            for row in cursor:
-                yield self.__row_to_id_and_item(row)
+        results = {}
 
-        if n is None and page is None:
-            return gen()
-        else:
-            return [self.__row_to_id_and_item(row) for row in cursor.fetchall()]
+        for result in self._connection.execute(sql_query, sql_params).fetchall():
+            _id, updated_at = result[:2]
+            record = {
+                self.key_hash_to_original_key[h]: val
+                for h, val in zip(self.original_key_to_key_hash.values(), result[2:])
+                if val is not None
+            }
+            for k, v in record.items():
+                if self.schema[k] == "other":
+                    record[k] = pickle.loads(v)
+                elif self.schema[k] == "datetime":
+                    record[k] = datetime.datetime.fromtimestamp(v)
+                elif self.schema[k] == "json":
+                    record[k] = json.loads(v)
+                elif self.schema[k] == "boolean":
+                    record[k] = bool(v)
 
-    def count(self, query={}):
-        query, params = count_query(
-            table_name=self.name, query=query, column_type_map=self.column_type_map
-        )
-        cursor = self._connection.execute(query, params)
-        row = cursor.fetchone()
-        return row[0]
+            results[_id] = record
 
-    def distinct(self, column, query={}):
-        query, params = distinct_query(
+        return results
+
+    def distinct(self, key, query):
+        sql_query, sql_params = distinct_query(
             table_name=self.name,
-            column=column,
-            query=query,
-            column_type_map=self.column_type_map,
+            column=self.original_key_to_key_hash[key],
+            query={self.original_key_to_key_hash[k]: v for k, v in query.items()},
+            schema=self.hashed_key_schema,
         )
-        cursor = self._connection.execute(query, params)
-        rows = cursor.fetchall()
-        if rows:
-            return [row[0] for row in rows if row is not None]
-        else:
-            return []
 
-    def math(self, key, function, id=None, value=None):
-        functions = {"+", "-", "*", "/", "**", "%", "average", "sum", "min", "max"}
-        sql_map = {
-            "+": f"UPDATE {self.name} " + "SET {} = {} + ? WHERE id = ?",
-            "-": f"UPDATE {self.name} " + "SET {} = {} - ? WHERE id = ?",
-            "*": f"UPDATE {self.name} " + "SET {} = {} * ? WHERE id = ?",
-            "/": f"UPDATE {self.name} " + "SET {} = {} / ? WHERE id = ?",
-            "**": f"UPDATE {self.name} " + "SET {} = {} ** ? WHERE id = ?",
-            "%": f"UPDATE {self.name} " + "SET {} = {} % ? WHERE id = ?",
+        return {
+            _[0] for _ in self._connection.execute(sql_query, sql_params).fetchall()
         }
 
-        if function not in functions:
-            raise ValueError(
-                f"Unsupported function '{function}', available options are: {functions}"
+    def group(self, keys, query):
+        if isinstance(keys, str):
+            keys = [keys]
+
+        sql_query, sql_params = group_by_query(
+            table_name=self.name,
+            columns=[self.original_key_to_key_hash[key] for key in keys],
+            query={self.original_key_to_key_hash[k]: v for k, v in query.items()},
+            schema=self.hashed_key_schema,
+        )
+
+        return {
+            _[0]: _[1].split(self.not_allowed_character_in_id)
+            for _ in self._connection.execute(sql_query, sql_params).fetchall()
+        }
+
+    def pop(self, n, query={}, sort_by="updated_at", reversed_sort=True):
+        pass
+
+    def delete(self, ids=None, query=None):
+        if query:
+            sql_query, sql_params = delete_query(
+                table_name=self.name,
+                query={self.original_key_to_key_hash[k]: v for k, v in query.items()},
+                schema=self.hashed_key_schema,
             )
 
-        if function in sql_map:
-            if value is None or id is None:
-                raise ValueError(
-                    f"Value and id must be provided for function '{function}'"
-                )
-            sql = sql_map[function].format(key, key)
-            self._connection.execute(sql, (value, id))
+            self._connection.execute(sql_query, sql_params)
+            self._connection.commit()
+        elif ids:
+            if isinstance(ids, str):
+                ids = [ids]
+
+            placeholders = ", ".join(["?" for _ in ids])
+            sql_query = f"DELETE FROM {self.name} WHERE id IN ({placeholders})"
+            self._connection.execute(sql_query, ids)
             self._connection.commit()
         else:
-            aggregation_map = {
-                "average": "AVG",
-                "sum": "SUM",
-                "min": "MIN",
-                "max": "MAX",
-            }
+            raise ValueError("Either ids or query must be provided")
 
-            result = self._connection.execute(
-                f"SELECT {aggregation_map[function]}({key}) FROM {self.name}"
-            ).fetchone()[0]
+    def count(self, query={}):
+        sql_query, sql_params = count_query(
+            table_name=self.name,
+            query={self.original_key_to_key_hash[k]: v for k, v in query.items()},
+            schema=self.hashed_key_schema,
+        )
 
-            return result
+        return self._connection.execute(sql_query, sql_params).fetchone()[0]
+
+    def optimize_key_for_querying(self, key, is_unique=False):
+        if self.schema[key] in {"string", "number", "boolean", "datetime"}:
+            key_hash = self.original_key_to_key_hash[key]
+            if not is_unique:
+                self._connection.execute(
+                    f"CREATE INDEX IF NOT EXISTS idx_{self.name}_{key_hash} ON {self.name} ({key_hash})"
+                )
+            else:
+                self._connection.execute(
+                    f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{self.name}_{key_hash} ON {self.name} ({key_hash})"
+                )
+
+            self._connection.commit()
+        else:
+            raise ValueError(
+                f"Cannot optimize for querying on {key}. Only string, number, boolean and datetime types are supported"
+            )
+
+    def list_optimized_keys(self):
+        return {
+            k: v
+            for k, v in {
+                self.key_hash_to_original_key.get(
+                    _[1].replace(f"idx_{self.name}_", "")
+                ): {"is_unique": bool(_[2])}
+                for _ in self._connection.execute(
+                    f"PRAGMA index_list({self.name})"
+                ).fetchall()
+                if _[1].startswith(f"idx_{self.name}_")
+            }.items()
+            if k and v
+        }
+
+    def math(self, key, op, query={}):
+        if op not in {"sum", "avg", "min", "max", "+=", "-=", "*=", "/=", "//=", "%="}:
+            raise ValueError("Invalid operation")
+
+        op_func = {
+            "sum": sum_query,
+            "avg": avg_query,
+            "min": min_query,
+            "max": max_query,
+            "+=": plus_equals_query,
+            "-=": minus_equals_query,
+            "*=": multiply_equals_query,
+            "/=": divide_equals_query,
+            "//=": floor_divide_equals_query,
+            "%=": modulo_equals_query,
+        }[op]
+
+        sql_query, sql_params = op_func(
+            table_name=self.name,
+            column=self.original_key_to_key_hash[key],
+            query={self.original_key_to_key_hash[k]: v for k, v in query.items()},
+            schema=self.hashed_key_schema,
+        )
+
+        return self._connection.execute(sql_query, sql_params).fetchone()[0]
+
+    def trigger(self):
+        pass
 
 
 if __name__ == "__main__":
-    # Define the schema for the index
     schema = {
-        "name": "",
-        "age": 0,
-        "address": {"street": "", "city": "", "state": "", "country": ""},
-        "years": [1, 2, 3, 4],
+        "name": "string",
+        "age": "number",
+        "password": "string",
+        "verified": "boolean",
+        "nicknames": "json",
+        "address_details": "json",
+        "profile_picture": "blob",
+        "user_vector": "other",
     }
 
-    # Create a new index with the specified schema
-    index = DefinedIndex("test_index", schema=schema)
-    # Set an item in the index
-    item = {
-        "name": "John Doe",
-        "age": 30,
-        "address": {
-            "street": "123 Main St",
-            "city": "New York",
-            "state": "NY",
-            "country": "USA",
-        },
-    }
-    index.set("1", item)
+    index = DefinedIndex(name="user_details", schema=schema)
 
-    index.set(("1", "name"), "updated John Doe")
-    print(index.get("1"))
+    index.update(
+        {
+            "user1": {
+                "name": "John Doe",
+                "age": 25,
+                "password": "password123",
+                "verified": True,
+                "nicknames": ["John", "Johnny"],
+                "address_details": {
+                    "city": "New York",
+                    "state": "New York",
+                    "country": "USA",
+                },
+                "profile_picture": b"some binary data here",
+            },
+            "user2": {
+                "name": "Jane Doe",
+                "age": 22,
+            },
+        }
+    )
 
-    index.set(("1", "years"), [1, 2, 3])
-    print(index.get("1"))
+    index.update(
+        {
+            "user3": {
+                "name": "John Doe",
+                "age": 25,
+                "password": "password123",
+                "verified": True,
+                "nicknames": ["John", "Johnny"],
+                "address_details": {
+                    "city": "New York",
+                    "state": "New York",
+                    "country": "USA",
+                },
+                "profile_picture": b"some binary data here    aaaa bbb",
+            },
+            "user4": {
+                "name": "Jane Doe",
+                "age": 22,
+            },
+        }
+    )
 
-    index.set(("1", "years", 1), 4)
-    print(index.get("1"))
+    print("-->", index.list_optimized_keys())
+    index.optimize_key_for_querying("name")
+    print("-->", index.list_optimized_keys())
 
-    index.set(("1", "address", "state"), "updated NY 2")
-    print(index.get("1"))
+    print(
+        "---->",
+        index.math("age", "sum", query={"age": {"$gt": 20}}),
+        index.math("age", "sum", query={"age": {"$gt": 60}}),
+    )
 
-    # Search for items in the index
-    query = {"age": {"$lte": 35}}
-    results = index.search(query)
-    for result in results:
-        print("--", result)
+    # print(index.get("user1", "user2", "user3"))
 
-    # Count the number of items matching a query
-    count = index.count(query)
-    print("Count:", count)
+    print(index.search(query={"age": {"$gt": 20}}))
 
-    # distinct the number of items matching a query
-    distinct = index.distinct("age", query)
+    print("Get:", index.get(["user1", "user2", "user3", "user4"]))
+
+    print(index.distinct(key="name", query={"age": {"$gt": 20}}))
+
+    print(index.group(keys="name", query={"age": {"$gt": 20}}))
+
+    print(index.count(query={"age": {"$gt": 20}}), index.count())
+
+    index.delete(ids=["user1", "user2"])
+
+    print(index.group(keys="name", query={"age": {"$gt": 20}}))
+
+    print(index.count(query={"age": {"$gt": 20}}))
+
+    index.clear()
+
+    print(index.count(query={"age": {"$gt": 20}}), index.count())
+
+    index.drop()
+
+    print(index.count(query={"age": {"$gt": 20}}))
