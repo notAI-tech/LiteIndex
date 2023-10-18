@@ -32,7 +32,16 @@ import threading
 
 
 class DefinedIndex:
-    def __init__(self, name, schema=None, example=None, from_csv=None, load_data_from_csv=True, db_path=":memory:", memory_limit=64):
+    def __init__(
+        self,
+        name,
+        schema=None,
+        example=None,
+        from_csv=None,
+        load_data_from_csv=True,
+        db_path=":memory:",
+        memory_limit=64,
+    ):
         if name.startswith("__"):
             raise ValueError("Index name cannot start with '__'")
 
@@ -55,7 +64,7 @@ class DefinedIndex:
                     schema[k] = "datetime"
                 else:
                     schema[k] = "other"
-        
+
         if not schema and from_csv:
             pass
 
@@ -65,6 +74,8 @@ class DefinedIndex:
         self.db_path = db_path
         self.key_hash_to_original_key = {}
         self.original_key_to_key_hash = {}
+        self.column_names = []
+
         self.schema_property_to_column_type = {
             "boolean": "INTEGER",
             "number": "NUMBER",
@@ -88,9 +99,7 @@ class DefinedIndex:
 
         self._validate_set_schema_if_exists()
         self._parse_schema()
-
         self._create_table_and_meta_table()
-        self.column_names = []
 
         if from_csv and load_data_from_csv:
             pass
@@ -109,7 +118,9 @@ class DefinedIndex:
             self.local_storage.db_conn = sqlite3.connect(self.db_path, uri=True)
             self.local_storage.db_conn.execute("PRAGMA journal_mode=WAL")
             self.local_storage.db_conn.execute("PRAGMA synchronous=NORMAL")
-            self.local_storage.db_conn.execute(f"PRAGMA cache_size=-{self.memory_limit}") # Set cache size to 64MB
+            self.local_storage.db_conn.execute(
+                f"PRAGMA cache_size=-{self.memory_limit}"
+            )  # Set cache size to 64MB
 
         return self.local_storage.db_conn
 
@@ -177,7 +188,6 @@ class DefinedIndex:
             f"CREATE INDEX IF NOT EXISTS idx_{self.name}_updated_at ON {self.name} (updated_at)"
         )
 
-        # Create the metadata table
         self._connection.execute(
             f"CREATE TABLE IF NOT EXISTS {self.meta_table_name} "
             "(hash TEXT PRIMARY KEY, pickled BLOB, value_type TEXT)"
@@ -199,7 +209,7 @@ class DefinedIndex:
 
         # Prepare the SQL command
         all_columns = ["id", "updated_at"]
-        all_columns.extend(self.original_key_to_key_hash.values())
+        all_columns.extend(self.column_names)
         columns = ", ".join([f'"{h}"' for h in all_columns])
         values = ", ".join(["?" for _ in range(len(all_columns))])
         sql = f"REPLACE INTO {self.name} ({columns}) VALUES ({values})"
@@ -238,7 +248,6 @@ class DefinedIndex:
 
             transactions.append(tuple(processed_data.values()))
 
-        # Execute the SQL command using `executemany`
         self._connection.executemany(sql, transactions)
         self._connection.commit()
 
@@ -296,19 +305,22 @@ class DefinedIndex:
         page_no=None,
         select_keys=[],
     ):
-        if {
-            k
-            for k in query
-            if k not in self.schema or self.schema[k] in {"other"}
-        }:
+        if {k for k in query if k not in self.schema or self.schema[k] in {"other"}}:
             raise ValueError("Invalid query")
-        
-        if sort_by not in self.schema or self.schema[sort_by] in {"other", "string", "json"}:
-            raise ValueError("Invalid sort_by")
-        
-        if self.schema[sort_by] == "blob":
-            sort_by = f"__size_{self.original_key_to_key_hash[sort_by]}"
-        
+
+        if sort_by != "updated_at":
+            if sort_by not in self.schema or self.schema[sort_by] in {
+                "other",
+                "string",
+                "json",
+            }:
+                raise ValueError("Invalid sort_by")
+
+            if self.schema[sort_by] == "blob":
+                sort_by = f"__size_{self.original_key_to_key_hash[sort_by]}"
+
+        if not select_keys:
+            select_keys = list(self.original_key_to_key_hash)
 
         sql_query, sql_params = search_query(
             table_name=self.name,
@@ -321,13 +333,12 @@ class DefinedIndex:
             page_size=n if page_no else None,
             select_columns=(
                 ["id", "updated_at"]
-                + [self.original_key_to_key_hash[k] for k in select_keys]
-            )
-            if select_keys
-            else None,
+                + [f'"{self.original_key_to_key_hash[k]}"' for k in select_keys]
+            ),
         )
 
         results = {}
+
         for result in self._connection.execute(sql_query, sql_params).fetchall():
             _id, updated_at = result[:2]
             record = {
@@ -428,7 +439,7 @@ class DefinedIndex:
                 f"Cannot optimize for querying on {key}. Only string, number, boolean and datetime types are supported"
             )
 
-    def querying_optimized_keys(self):
+    def list_optimized_keys(self):
         return {
             k: v
             for k, v in {
@@ -468,7 +479,7 @@ class DefinedIndex:
         )
 
         return self._connection.execute(sql_query, sql_params).fetchone()[0]
-    
+
     def trigger(self):
         pass
 
@@ -522,7 +533,7 @@ if __name__ == "__main__":
                     "state": "New York",
                     "country": "USA",
                 },
-                "profile_picture": b"some binary data here",
+                "profile_picture": b"some binary data here    aaaa bbb",
             },
             "user4": {
                 "name": "Jane Doe",
@@ -531,9 +542,9 @@ if __name__ == "__main__":
         }
     )
 
-    print("-->", index.querying_optimized_keys())
+    print("-->", index.list_optimized_keys())
     index.optimize_key_for_querying("name")
-    print("-->", index.querying_optimized_keys())
+    print("-->", index.list_optimized_keys())
 
     print(
         "---->",
