@@ -100,7 +100,6 @@ class DefinedIndex:
     def __del__(self):
         if self._connection:
             self._connection.close()
-            self._connection = None
 
     @property
     def _connection(self):
