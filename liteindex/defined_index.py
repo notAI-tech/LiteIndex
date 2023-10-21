@@ -40,13 +40,13 @@ class DefinedIndex:
         import_from_file=None,
         file_type=None,
         db_path=":memory:",
-        memory_limit=64,
+        ram_cache_mb=64,
     ):
         if name.startswith("__"):
             raise ValueError("Index name cannot start with '__'")
 
         self.name = name
-        self.memory_limit = memory_limit
+        self.ram_cache_mb = ram_cache_mb
         if not schema and example:
             schema = {}
             for k, v in example.items():
@@ -111,8 +111,8 @@ class DefinedIndex:
             self.local_storage.db_conn.execute("PRAGMA journal_mode=WAL")
             self.local_storage.db_conn.execute("PRAGMA synchronous=NORMAL")
             self.local_storage.db_conn.execute(
-                f"PRAGMA cache_size=-{self.memory_limit}"
-            )  # Set cache size to 64MB
+                f"PRAGMA cache_size=-{self.ram_cache_mb * 1024}"
+            )
 
         return self.local_storage.db_conn
 
