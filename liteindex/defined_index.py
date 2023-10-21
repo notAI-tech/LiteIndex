@@ -392,8 +392,28 @@ class DefinedIndex:
             for _ in self._connection.execute(sql_query, sql_params).fetchall()
         }
 
-    def pop(self, n, query={}, sort_by="updated_at", reversed_sort=True):
-        pass
+    def pop(self, n=1, query={}, sort_by="updated_at", reversed_sort=False):
+        with self._connection:
+            # Begin a transaction
+            self._connection.execute("BEGIN TRANSACTION")
+
+            try:
+                # Perform a search operation with limit n
+                results = self.search(query, sort_by, reversed_sort, n)
+
+                # If search results are not empty delete the searched records
+                if results:
+                    self.delete(ids=list(results.keys()))
+            except:
+                # If an error occurred rollback the changes
+                self._connection.rollback()
+                raise
+            else:
+                # If no errors occurred commit the changes
+                self._connection.commit()
+
+            # Return the popped results
+            return results
 
     def delete(self, ids=None, query=None):
         if query:
