@@ -158,3 +158,12 @@ index.count({"name": "Joe Biden"})
 index.optimize_for_query()
 ```
 
+### Lock and Unlock access to Rows
+```python
+index.lock()
+index.unlock()
+
+index.search(......., lock="read")
+index.update(......., lock="")
+index.delete()
+```
