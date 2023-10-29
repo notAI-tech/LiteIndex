@@ -149,7 +149,7 @@ class DefinedIndex:
         for key, value_type in self.schema.items():
             if value_type not in self.schema_property_to_column_type:
                 raise ValueError(f"Invalid schema property: {value_type}")
-            key_hash = common_utils.stable_hash(key)
+            key_hash = f"col_{common_utils.stable_hash(key)}"
             self.key_hash_to_original_key[key_hash] = key
             self.original_key_to_key_hash[key] = key_hash
             self.hashed_key_schema[key_hash] = value_type
