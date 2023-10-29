@@ -307,7 +307,7 @@ class DefinedIndex:
         reversed_sort=False,
         n=None,
         page_no=None,
-        select_keys=[],
+        select_keys=[]
     ):
         if {k for k in query if k not in self.schema or self.schema[k] in {"other"}}:
             raise ValueError("Invalid query")
@@ -392,7 +392,7 @@ class DefinedIndex:
             for _ in self._connection.execute(sql_query, sql_params).fetchall()
         }
 
-    def pop(self, n=1, query={}, sort_by="updated_at", reversed_sort=False):
+    def pop(self, query={}, n=1, sort_by="updated_at", reversed_sort=False):
         with self._connection:
             # Begin a transaction
             self._connection.execute("BEGIN TRANSACTION")
