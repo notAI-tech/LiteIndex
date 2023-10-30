@@ -2,7 +2,7 @@
 in-process, thread and process safe, easy to use, query-able object storage implenetation for Python
 
 ### Some use cases, benchmarks and examples:
-- cache for a python function
+- persistent, fast in-process caches and query-able queues
 - store and query large number of records without using up memory
 - ultra-fast, query-able file storage (faster than creating files on disk and way better for querying)
 - exchange data between threads or processes easily
