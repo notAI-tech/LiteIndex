@@ -320,8 +320,10 @@ class DefinedIndex:
             }:
                 raise ValueError("Invalid sort_by")
 
-            if self.schema[sort_by] == "blob":
+            elif self.schema[sort_by] == "blob":
                 sort_by = f"__size_{self.original_key_to_key_hash[sort_by]}"
+            else:
+                sort_by = self.original_key_to_key_hash[sort_by]
 
         if not select_keys:
             select_keys = list(self.original_key_to_key_hash)
