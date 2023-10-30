@@ -94,6 +94,10 @@ class DefinedIndex:
         self.local_storage = threading.local()
 
         self._validate_set_schema_if_exists()
+
+        if not self.schema:
+            raise ValueError("Schema must be provided")
+
         self._parse_schema()
         self._create_table_and_meta_table()
 
@@ -255,7 +259,6 @@ class DefinedIndex:
 
                 transactions.append([_data[key] for key in all_columns])
 
-            print(sql, transactions)
             self._connection.executemany(sql, transactions)
 
         self._connection.commit()
