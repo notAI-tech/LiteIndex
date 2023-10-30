@@ -345,6 +345,8 @@ class DefinedIndex:
         if not select_keys:
             select_keys = list(self.original_key_to_key_hash)
 
+        select_keys_hashes = [self.original_key_to_key_hash[k] for k in select_keys]
+
         sql_query, sql_params = search_query(
             table_name=self.name,
             query={self.original_key_to_key_hash[k]: v for k, v in query.items()},
@@ -354,10 +356,7 @@ class DefinedIndex:
             n=n,
             page=page_no,
             page_size=n if page_no else None,
-            select_columns=(
-                ["id", "updated_at"]
-                + [f'"{self.original_key_to_key_hash[k]}"' for k in select_keys]
-            ),
+            select_columns=(["id", "updated_at"] + select_keys_hashes),
         )
 
         results = {}
@@ -366,7 +365,7 @@ class DefinedIndex:
             _id, updated_at = result[:2]
             record = {
                 self.key_hash_to_original_key[h]: val
-                for h, val in zip(self.original_key_to_key_hash.values(), result[2:])
+                for h, val in zip(select_keys_hashes, result[2:])
             }
             for k, v in record.items():
                 if v is None:
