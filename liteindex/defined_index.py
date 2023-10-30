@@ -287,7 +287,6 @@ class DefinedIndex:
             record = {
                 self.key_hash_to_original_key[h]: val
                 for h, val in zip(select_keys, row[1:])
-                if val is not None
             }
             for k, v in record.items():
                 if v is None:
@@ -365,9 +364,10 @@ class DefinedIndex:
             record = {
                 self.key_hash_to_original_key[h]: val
                 for h, val in zip(self.original_key_to_key_hash.values(), result[2:])
-                if val is not None
             }
             for k, v in record.items():
+                if v is None:
+                    continue
                 if self.schema[k] == "other":
                     record[k] = pickle.loads(v)
                 elif self.schema[k] == "datetime":
