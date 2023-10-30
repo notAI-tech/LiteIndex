@@ -146,10 +146,10 @@ class DefinedIndex:
                 raise ValueError("existing schema does not match the provided schema")
 
     def _parse_schema(self):
-        for key, value_type in self.schema.items():
+        for _i, (key, value_type) in enumerate(self.schema.items()):
             if value_type not in self.schema_property_to_column_type:
                 raise ValueError(f"Invalid schema property: {value_type}")
-            key_hash = f"col_{common_utils.stable_hash(key)}"
+            key_hash = f"col_{_i}"
             self.key_hash_to_original_key[key_hash] = key
             self.original_key_to_key_hash[key] = key_hash
             self.hashed_key_schema[key_hash] = value_type
@@ -197,52 +197,65 @@ class DefinedIndex:
         self._connection.commit()
 
     def update(self, data):
-        transactions = []
+        data = {
+            k: {self.original_key_to_key_hash[_k]: _v for _k, _v in v.items()}
+            for k, v in data.items()
+        }
 
-        # Prepare the SQL command
-        all_columns = ["id", "updated_at"]
-        all_columns.extend(self.column_names)
-        columns = ", ".join([f'"{h}"' for h in all_columns])
-        values = ", ".join(["?" for _ in range(len(all_columns))])
-        sql = f"REPLACE INTO {self.name} ({columns}) VALUES ({values})"
+        ids_grouped_by_common_keys = {}
 
-        # Iterate through each item in the data
         for k, _data in data.items():
-            # Create a new dictionary to store processed (hashed key) data
-            processed_data = {h: None for h in all_columns}
-            processed_data["id"] = k
-            processed_data["updated_at"] = time.time()
-            for key, value in _data.items():
-                if key not in self.schema:
-                    raise ValueError(f"Key not in schema: {key} for id: {k}")
+            keys = tuple(sorted(_data.keys()))
+            if keys not in ids_grouped_by_common_keys:
+                ids_grouped_by_common_keys[keys] = []
 
-                if value is None:
-                    continue
+            ids_grouped_by_common_keys[keys].append(k)
 
-                # Get the hashed equivalent of the key
-                key_hash = self.original_key_to_key_hash[key]
+        for keys, ids_group in ids_grouped_by_common_keys.items():
+            updated_at = time.time()
 
-                # Process the value based on its type
-                if self.schema[key] == "other":
-                    value = sqlite3.Binary(pickle.dumps(value))
-                elif self.schema[key] == "datetime":
-                    value = value.timestamp()
-                elif self.schema[key] == "json":
-                    value = json.dumps(value)
-                elif self.schema[key] == "boolean":
-                    value = int(value)
-                elif self.schema[key] == "blob":
-                    value = sqlite3.Binary(value)
-                    processed_data[f"__size_{key_hash}"] = len(value)
-                    processed_data[f"__hash_{key_hash}"] = common_utils.hash_bytes(
-                        value
-                    )
+            transactions = []
 
-                processed_data[key_hash] = value
+            all_columns = ("id", "updated_at") + keys
 
-            transactions.append(tuple(processed_data.values()))
+            columns = ", ".join([f'"{h}"' for h in all_columns])
+            values = ", ".join(["?" for _ in range(len(all_columns))])
+            updates = ", ".join(
+                [f'"{f}" = excluded."{f}"' for f in all_columns if f != "id"]
+            )
 
-        self._connection.executemany(sql, transactions)
+            sql = f"INSERT INTO {self.name} ({columns}) VALUES ({values}) ON CONFLICT(id) DO UPDATE SET {updates}"
+
+            for k in ids_group:
+                _data = data[k]
+
+                _data["id"] = k
+                _data["updated_at"] = updated_at
+
+                for key_hash in keys:
+                    value = _data[key_hash]
+
+                    key = self.key_hash_to_original_key[key_hash]
+                    if self.schema[key] == "other":
+                        value = sqlite3.Binary(pickle.dumps(value))
+                    elif self.schema[key] == "datetime":
+                        value = value.timestamp()
+                    elif self.schema[key] == "json":
+                        value = json.dumps(value)
+                    elif self.schema[key] == "boolean":
+                        value = int(value)
+                    elif self.schema[key] == "blob":
+                        value = sqlite3.Binary(value)
+                        _data[f"__size_{key_hash}"] = len(value)
+                        _data[f"__hash_{key_hash}"] = common_utils.hash_bytes(value)
+
+                    _data[key_hash] = value
+
+                transactions.append([_data[key] for key in all_columns])
+
+            print(sql, transactions)
+            self._connection.executemany(sql, transactions)
+
         self._connection.commit()
 
     def get(self, ids, select_keys=[]):
@@ -307,7 +320,7 @@ class DefinedIndex:
         reversed_sort=False,
         n=None,
         page_no=None,
-        select_keys=[]
+        select_keys=[],
     ):
         if {k for k in query if k not in self.schema or self.schema[k] in {"other"}}:
             raise ValueError("Invalid query")
