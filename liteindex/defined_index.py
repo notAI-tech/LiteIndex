@@ -236,18 +236,20 @@ class DefinedIndex:
                     value = _data[key_hash]
 
                     key = self.key_hash_to_original_key[key_hash]
-                    if self.schema[key] == "other":
-                        value = sqlite3.Binary(pickle.dumps(value))
-                    elif self.schema[key] == "datetime":
-                        value = value.timestamp()
-                    elif self.schema[key] == "json":
-                        value = json.dumps(value)
-                    elif self.schema[key] == "boolean":
-                        value = int(value)
-                    elif self.schema[key] == "blob":
-                        value = sqlite3.Binary(value)
-                        _data[f"__size_{key_hash}"] = len(value)
-                        _data[f"__hash_{key_hash}"] = common_utils.hash_bytes(value)
+
+                    if value is not None:
+                        if self.schema[key] == "other":
+                            value = sqlite3.Binary(pickle.dumps(value))
+                        elif self.schema[key] == "datetime":
+                            value = value.timestamp()
+                        elif self.schema[key] == "json":
+                            value = json.dumps(value)
+                        elif self.schema[key] == "boolean":
+                            value = int(value)
+                        elif self.schema[key] == "blob":
+                            value = sqlite3.Binary(value)
+                            _data[f"__size_{key_hash}"] = len(value)
+                            _data[f"__hash_{key_hash}"] = common_utils.hash_bytes(value)
 
                     _data[key_hash] = value
 
