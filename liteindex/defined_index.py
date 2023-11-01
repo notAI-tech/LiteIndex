@@ -114,6 +114,10 @@ class DefinedIndex:
             self.local_storage.db_conn = sqlite3.connect(self.db_path, uri=True)
             self.local_storage.db_conn.execute("PRAGMA journal_mode=WAL")
             self.local_storage.db_conn.execute("PRAGMA synchronous=NORMAL")
+
+            self.local_storage.db_conn.execute("PRAGMA auto_vacuum=FULL")
+            self.local_storage.db_conn.execute("PRAGMA auto_vacuum_increment=1000")
+
             self.local_storage.db_conn.execute(
                 f"PRAGMA cache_size=-{self.ram_cache_mb * 1024}"
             )
