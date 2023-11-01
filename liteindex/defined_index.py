@@ -565,5 +565,39 @@ class DefinedIndex:
 
         return self._connection.execute(sql_query, sql_params).fetchone()[0]
 
-    def trigger(self):
-        pass
+    def trigger(self, function, operation="UPDATE", timing="AFTER", on_keys=None, each_row=False):
+        trigger_name = f"{self.name}_{operation.lower()}_trigger"
+
+        if operation.upper() not in {"INSERT", "UPDATE", "DELETE"}:
+            raise ValueError("Invalid operation type. Choose: INSERT, UPDATE, DELETE.")
+
+        if timing.upper() not in {"BEFORE", "AFTER"}:
+            raise ValueError("Invalid timing. Choose: BEFORE, AFTER.")
+
+        if operation.upper() == "UPDATE" and on_keys is None:
+            raise ValueError("For UPDATE operation, the affected columns should be specified.")
+
+        keys_sql = f"OF {','.join(on_keys)}" if on_keys else ""
+
+        each_row_sql = "FOR EACH ROW" if each_row else ""
+
+        trigger_sql = f"""
+        CREATE TRIGGER {trigger_name}
+        {timing.upper()} {operation.upper()} {keys_sql} ON {self.name} 
+        {each_row_sql}
+        BEGIN
+          {function};
+        END;
+        """
+
+        self._connection.execute(trigger_sql)
+    
+    def list_triggers(self, table_name=None):
+        if table_name:
+            result = self._connection.execute(f"SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = '{table_name}';")
+        else:
+            result = self._connection.execute(f"SELECT name FROM sqlite_master WHERE type = 'trigger';")
+        return result.fetchall()
+
+    def delete_trigger(self, trigger_name):
+        self._connection.execute(f"DROP TRIGGER {trigger_name};")
