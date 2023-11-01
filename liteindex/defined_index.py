@@ -325,6 +325,7 @@ class DefinedIndex:
         n=None,
         page_no=None,
         select_keys=[],
+        update=None,
     ):
         if {k for k in query if k not in self.schema or self.schema[k] in {"other"}}:
             raise ValueError("Invalid query")
@@ -356,8 +357,45 @@ class DefinedIndex:
             n=n,
             page=page_no,
             page_size=n if page_no else None,
-            select_columns=(["id", "updated_at"] + select_keys_hashes),
+            select_columns=(["id", "updated_at"] + select_keys_hashes)
+            if not update
+            else ["id"],
         )
+
+        if update:
+            _update = {}
+
+            for k, v in update.items():
+                if v is not None:
+                    if self.schema[k] == "other":
+                        v = sqlite3.Binary(pickle.dumps(v))
+                    elif self.schema[k] == "datetime":
+                        v = v.timestamp()
+                    elif self.schema[k] == "json":
+                        v = json.dumps(v)
+                    elif self.schema[k] == "boolean":
+                        v = int(v)
+                    elif self.schema[k] == "blob":
+                        v = sqlite3.Binary(v)
+                        _update[f"__size_{self.original_key_to_key_hash[k]}"] = len(v)
+                        _update[
+                            f"__hash_{self.original_key_to_key_hash[k]}"
+                        ] = common_utils.hash_bytes(v)
+
+                _update[self.original_key_to_key_hash[k]] = v
+
+            update_columns = ", ".join([f'"{h}" = ?' for h in _update.keys()])
+
+            sql_query = f"UPDATE {self.name} SET {update_columns} WHERE id IN ({sql_query}) RETURNING id"
+
+            sql_params = [_ for _ in _update.values()] + sql_params
+
+            results = {
+                _[0]: {}
+                for _ in self._connection.execute(sql_query, sql_params).fetchall()
+            }
+            self._connection.commit()
+            return results
 
         results = {}
 
