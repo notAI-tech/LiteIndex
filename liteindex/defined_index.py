@@ -366,6 +366,8 @@ class DefinedIndex:
             else ["id"],
         )
 
+        _results = None
+
         if update:
             _update = {}
 
@@ -390,20 +392,20 @@ class DefinedIndex:
 
             update_columns = ", ".join([f'"{h}" = ?' for h in _update.keys()])
 
-            sql_query = f"UPDATE {self.name} SET {update_columns} WHERE id IN ({sql_query}) RETURNING id"
+            sql_query = f"UPDATE {self.name} SET {update_columns} WHERE id IN ({sql_query}) RETURNING {', '.join(['id', 'updated_at'] + select_keys_hashes)}"
 
             sql_params = [_ for _ in _update.values()] + sql_params
 
-            results = {
-                _[0]: {}
-                for _ in self._connection.execute(sql_query, sql_params).fetchall()
-            }
+            _results = self._connection.execute(sql_query, sql_params).fetchall()
+
             self._connection.commit()
-            return results
+
+        else:
+            _results = self._connection.execute(sql_query, sql_params).fetchall()
 
         results = {}
 
-        for result in self._connection.execute(sql_query, sql_params).fetchall():
+        for result in _results:
             _id, updated_at = result[:2]
             record = {
                 self.key_hash_to_original_key[h]: val
@@ -565,7 +567,9 @@ class DefinedIndex:
 
         return self._connection.execute(sql_query, sql_params).fetchone()[0]
 
-    def trigger(self, function, operation="UPDATE", timing="AFTER", on_keys=None, each_row=False):
+    def trigger(
+        self, function, operation="UPDATE", timing="AFTER", on_keys=None, each_row=False
+    ):
         trigger_name = f"{self.name}_{operation.lower()}_trigger"
 
         if operation.upper() not in {"INSERT", "UPDATE", "DELETE"}:
@@ -575,7 +579,9 @@ class DefinedIndex:
             raise ValueError("Invalid timing. Choose: BEFORE, AFTER.")
 
         if operation.upper() == "UPDATE" and on_keys is None:
-            raise ValueError("For UPDATE operation, the affected columns should be specified.")
+            raise ValueError(
+                "For UPDATE operation, the affected columns should be specified."
+            )
 
         keys_sql = f"OF {','.join(on_keys)}" if on_keys else ""
 
@@ -591,12 +597,16 @@ class DefinedIndex:
         """
 
         self._connection.execute(trigger_sql)
-    
+
     def list_triggers(self, table_name=None):
         if table_name:
-            result = self._connection.execute(f"SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = '{table_name}';")
+            result = self._connection.execute(
+                f"SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = '{table_name}';"
+            )
         else:
-            result = self._connection.execute(f"SELECT name FROM sqlite_master WHERE type = 'trigger';")
+            result = self._connection.execute(
+                f"SELECT name FROM sqlite_master WHERE type = 'trigger';"
+            )
         return result.fetchall()
 
     def delete_trigger(self, trigger_name):
