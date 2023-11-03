@@ -117,6 +117,7 @@ index.drop()
 - `n`: Defaults to `None` which will return all records.
 - `page_no`: Defaults to `1` which will return the first page of results.
 - `select_keys`: A list of keys from schema. Defaults to `None` which will return all keys.
+- `update`: Optional dictionary of format `{key: record}`. If provided, will update the records in the index that match the query and return the updated records.
 
 [Full list of queries supported](https://github.com/notAI-tech/LiteIndex/blob/main/Query.md)
 
@@ -132,9 +133,17 @@ index.search(
     reversed_sort=True,
     n=10,
     page_no=1,
-    select_keys=["name", "age"]
+    select_keys=["name", "age"],
+    update={"verified": True}
 )
 ```
+
+### Count
+``` python
+index.count()
+index.count({"name": "Joe Biden"})
+```
+
 
 ### Distinct
 ```python
@@ -147,23 +156,7 @@ index.distinct("name", query={"gender": "female"})
 index.group()
 ```
 
-### Count
-``` python
-index.count()
-index.count({"name": "Joe Biden"})
-```
-
 ### Optimize for Search
 ```python
 index.optimize_for_query()
-```
-
-### Lock and Unlock access to Rows
-```python
-index.lock()
-index.unlock()
-
-index.search(......., lock="read")
-index.update(......., lock="")
-index.delete()
 ```
