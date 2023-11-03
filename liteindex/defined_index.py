@@ -455,7 +455,7 @@ class DefinedIndex:
             for _ in self._connection.execute(sql_query, sql_params).fetchall()
         }
 
-    def pop(self, query={}, n=1, sort_by="updated_at", reversed_sort=False):
+    def pop(self, ids=None, query={}, n=1, sort_by="updated_at", reversed_sort=False):
         with self._connection:
             # Begin a transaction
             self._connection.execute("BEGIN TRANSACTION")
@@ -478,7 +478,7 @@ class DefinedIndex:
             # Return the popped results
             return results
 
-    def delete(self, ids=None, query=None):
+    def delete(self, ids=None, query=None, n=None, sort_by="updated_at", reversed_sort=False):
         if query:
             sql_query, sql_params = delete_query(
                 table_name=self.name,
