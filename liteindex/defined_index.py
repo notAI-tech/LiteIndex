@@ -26,6 +26,7 @@ from .query_parser import (
     divide_equals_query,
     floor_divide_equals_query,
     modulo_equals_query,
+    pop_query,
 )
 
 import threading
@@ -104,6 +105,52 @@ class DefinedIndex:
     def __del__(self):
         if self._connection:
             self._connection.close()
+
+    def serialize_record(self, record):
+        _record = {}
+        for k, v in record.items():
+            if v is None:
+                _record[self.original_key_to_key_hash[k]] = None
+
+            elif self.schema[k] == "other":
+                _record[self.original_key_to_key_hash[k]] = sqlite3.Binary(
+                    pickle.dumps(v)
+                )
+            elif self.schema[k] == "datetime":
+                _record[self.original_key_to_key_hash[k]] = v.timestamp()
+            elif self.schema[k] == "json":
+                _record[self.original_key_to_key_hash[k]] = json.dumps(v)
+            elif self.schema[k] == "boolean":
+                _record[self.original_key_to_key_hash[k]] = int(v)
+            elif self.schema[k] == "blob":
+                _record[self.original_key_to_key_hash[k]] = sqlite3.Binary(v)
+                _record[f"__size_{self.original_key_to_key_hash[k]}"] = len(v)
+                _record[
+                    f"__hash_{self.original_key_to_key_hash[k]}"
+                ] = common_utils.hash_bytes(v)
+
+        return _record
+
+    def deserialize_record(self, record):
+        _record = {}
+        for k, v in record.items():
+            if v is None:
+                _record[self.key_hash_to_original_key[k]] = None
+
+            elif self.schema[self.key_hash_to_original_key[k]] == "other":
+                _record[self.key_hash_to_original_key[k]] = pickle.loads(v)
+            elif self.schema[self.key_hash_to_original_key[k]] == "datetime":
+                _record[
+                    self.key_hash_to_original_key[k]
+                ] = datetime.datetime.fromtimestamp(v)
+            elif self.schema[self.key_hash_to_original_key[k]] == "json":
+                _record[self.key_hash_to_original_key[k]] = json.loads(v)
+            elif self.schema[self.key_hash_to_original_key[k]] == "boolean":
+                _record[self.key_hash_to_original_key[k]] = bool(v)
+            elif self.schema[self.key_hash_to_original_key[k]] == "blob":
+                _record[self.key_hash_to_original_key[k]] = bytes(v)
+
+        return _record
 
     @property
     def _connection(self):
@@ -235,31 +282,10 @@ class DefinedIndex:
             sql = f"INSERT INTO {self.name} ({columns}) VALUES ({values}) ON CONFLICT(id) DO UPDATE SET {updates}"
 
             for k in ids_group:
-                _data = data[k]
+                _data = self.serialize_record(data[k])
 
                 _data["id"] = k
                 _data["updated_at"] = updated_at
-
-                for key_hash in keys:
-                    value = _data[key_hash]
-
-                    key = self.key_hash_to_original_key[key_hash]
-
-                    if value is not None:
-                        if self.schema[key] == "other":
-                            value = sqlite3.Binary(pickle.dumps(value))
-                        elif self.schema[key] == "datetime":
-                            value = value.timestamp()
-                        elif self.schema[key] == "json":
-                            value = json.dumps(value)
-                        elif self.schema[key] == "boolean":
-                            value = int(value)
-                        elif self.schema[key] == "blob":
-                            value = sqlite3.Binary(value)
-                            _data[f"__size_{key_hash}"] = len(value)
-                            _data[f"__hash_{key_hash}"] = common_utils.hash_bytes(value)
-
-                    _data[key_hash] = value
 
                 transactions.append([_data[key] for key in all_columns])
 
@@ -291,23 +317,10 @@ class DefinedIndex:
 
         result = {}
         for row in self._connection.execute(sql, ids).fetchall():
-            record = {
-                self.key_hash_to_original_key[h]: val
-                for h, val in zip(select_keys, row[1:])
-            }
-            for k, v in record.items():
-                if v is None:
-                    continue
-                if self.schema[k] == "other":
-                    record[k] = pickle.loads(v)
-                elif self.schema[k] == "datetime":
-                    record[k] = datetime.datetime.fromtimestamp(v)
-                elif self.schema[k] == "json":
-                    record[k] = json.loads(v)
-                elif self.schema[k] == "boolean":
-                    record[k] = bool(v)
+            result[row[0]] = self.deserialize_record(
+                {h: val for h, val in zip(select_keys, row[1:])}
+            )
 
-            result[row[0]] = record
         return result
 
     def clear(self):
@@ -369,32 +382,13 @@ class DefinedIndex:
         _results = None
 
         if update:
-            _update = {}
+            update = self.serialize_record(update)
 
-            for k, v in update.items():
-                if v is not None:
-                    if self.schema[k] == "other":
-                        v = sqlite3.Binary(pickle.dumps(v))
-                    elif self.schema[k] == "datetime":
-                        v = v.timestamp()
-                    elif self.schema[k] == "json":
-                        v = json.dumps(v)
-                    elif self.schema[k] == "boolean":
-                        v = int(v)
-                    elif self.schema[k] == "blob":
-                        v = sqlite3.Binary(v)
-                        _update[f"__size_{self.original_key_to_key_hash[k]}"] = len(v)
-                        _update[
-                            f"__hash_{self.original_key_to_key_hash[k]}"
-                        ] = common_utils.hash_bytes(v)
-
-                _update[self.original_key_to_key_hash[k]] = v
-
-            update_columns = ", ".join([f'"{h}" = ?' for h in _update.keys()])
+            update_columns = ", ".join([f'"{h}" = ?' for h in update.keys()])
 
             sql_query = f"UPDATE {self.name} SET {update_columns} WHERE id IN ({sql_query}) RETURNING {', '.join(['id', 'updated_at'] + select_keys_hashes)}"
 
-            sql_params = [_ for _ in _update.values()] + sql_params
+            sql_params = [_ for _ in update.values()] + sql_params
 
             _results = self._connection.execute(sql_query, sql_params).fetchall()
 
@@ -407,23 +401,9 @@ class DefinedIndex:
 
         for result in _results:
             _id, updated_at = result[:2]
-            record = {
-                self.key_hash_to_original_key[h]: val
-                for h, val in zip(select_keys_hashes, result[2:])
-            }
-            for k, v in record.items():
-                if v is None:
-                    continue
-                if self.schema[k] == "other":
-                    record[k] = pickle.loads(v)
-                elif self.schema[k] == "datetime":
-                    record[k] = datetime.datetime.fromtimestamp(v)
-                elif self.schema[k] == "json":
-                    record[k] = json.loads(v)
-                elif self.schema[k] == "boolean":
-                    record[k] = bool(v)
-
-            results[_id] = record
+            results[_id] = self.deserialize_record(
+                {h: val for h, val in zip(select_keys_hashes, result[2:])}
+            )
 
         return results
 
@@ -456,29 +436,31 @@ class DefinedIndex:
         }
 
     def pop(self, ids=None, query={}, n=1, sort_by="updated_at", reversed_sort=False):
-        with self._connection:
-            # Begin a transaction
-            self._connection.execute("BEGIN TRANSACTION")
+        if query:
+            sql_query, sql_params = pop_query(
+                table_name=self.name,
+                query={self.original_key_to_key_hash[k]: v for k, v in query.items()},
+                schema=self.hashed_key_schema,
+                sort_by=sort_by,
+                reversed_sort=reversed_sort,
+                n=n,
+            )
 
-            try:
-                # Perform a search operation with limit n
-                results = self.search(query, sort_by, reversed_sort, n)
+            return [
+                {
+                    self.key_hash_to_original_key[h]: val
+                    for h, val in zip(self.column_names, row[1:])
+                }
+                for row in self._connection.execute(sql_query, sql_params).fetchall()
+            ]
 
-                # If search results are not empty delete the searched records
-                if results:
-                    self.delete(ids=list(results.keys()))
-            except:
-                # If an error occurred rollback the changes
-                self._connection.rollback()
-                raise
-            else:
-                # If no errors occurred commit the changes
-                self._connection.commit()
+        elif ids:
+            pass
 
-            # Return the popped results
-            return results
+        else:
+            raise ValueError("Either ids or query must be provided")
 
-    def delete(self, ids=None, query=None, n=None, sort_by="updated_at", reversed_sort=False):
+    def delete(self, ids=None, query=None):
         if query:
             sql_query, sql_params = delete_query(
                 table_name=self.name,
