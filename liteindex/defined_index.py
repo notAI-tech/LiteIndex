@@ -128,6 +128,8 @@ class DefinedIndex:
                 _record[
                     f"__hash_{self.original_key_to_key_hash[k]}"
                 ] = common_utils.hash_bytes(v)
+            else:
+                _record[self.original_key_to_key_hash[k]] = v
 
         return _record
 
@@ -149,6 +151,8 @@ class DefinedIndex:
                 _record[self.key_hash_to_original_key[k]] = bool(v)
             elif self.schema[self.key_hash_to_original_key[k]] == "blob":
                 _record[self.key_hash_to_original_key[k]] = bytes(v)
+            else:
+                _record[self.key_hash_to_original_key[k]] = v
 
         return _record
 
@@ -252,15 +256,13 @@ class DefinedIndex:
         self._connection.commit()
 
     def update(self, data):
-        data = {
-            k: {self.original_key_to_key_hash[_k]: _v for _k, _v in v.items()}
-            for k, v in data.items()
-        }
-
         ids_grouped_by_common_keys = {}
 
         for k, _data in data.items():
-            keys = tuple(sorted(_data.keys()))
+            keys = tuple(
+                __ for _, __ in self.original_key_to_key_hash.items() if _ in _data
+            )
+
             if keys not in ids_grouped_by_common_keys:
                 ids_grouped_by_common_keys[keys] = []
 
