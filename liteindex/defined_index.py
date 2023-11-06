@@ -142,7 +142,7 @@ class DefinedIndex:
 
         return _record
 
-    def deserialize_record(self, record):
+    def deserialize_record(self, record, return_compressed=False):
         _record = {}
         for k, v in record.items():
             if v is None:
@@ -151,9 +151,9 @@ class DefinedIndex:
             elif self.schema[self.key_hash_to_original_key[k]] == "other":
                 _record[self.key_hash_to_original_key[k]] = pickle.loads(
                     self._decompressor.decompress(v)
-                    if self._decompressor is not False
+                    if (self._decompressor is not False or return_compressed)
                     else v
-                )
+                ) if not return_compressed else v
             elif self.schema[self.key_hash_to_original_key[k]] == "datetime":
                 _record[
                     self.key_hash_to_original_key[k]
@@ -167,7 +167,7 @@ class DefinedIndex:
                     self._decompressor.decompress(v)
                     if self._decompressor is not False
                     else v
-                )
+                ) if not return_compressed else v
             else:
                 _record[self.key_hash_to_original_key[k]] = v
 
@@ -332,7 +332,7 @@ class DefinedIndex:
 
                 self._connection.executemany(sql, transactions)
 
-    def get(self, ids, select_keys=[]):
+    def get(self, ids, select_keys=[], return_compressed=False):
         if isinstance(ids, str):
             ids = [ids]
 
@@ -357,7 +357,7 @@ class DefinedIndex:
         result = {}
         for row in self._connection.execute(sql, ids).fetchall():
             result[row[0]] = self.deserialize_record(
-                {h: val for h, val in zip(select_keys, row[1:])}
+                {h: val for h, val in zip(select_keys, row[1:])}, return_compressed
             )
 
         return result
@@ -381,7 +381,8 @@ class DefinedIndex:
         n=None,
         page_no=None,
         select_keys=[],
-        update=None
+        update=None,
+        return_compressed=False
     ):
         if {k for k in query if k not in self.schema or self.schema[k] in {"other"}}:
             raise ValueError("Invalid query")
@@ -441,7 +442,7 @@ class DefinedIndex:
         for result in _results:
             _id, updated_at = result[:2]
             results[_id] = self.deserialize_record(
-                {h: val for h, val in zip(select_keys_hashes, result[2:])}
+                {h: val for h, val in zip(select_keys_hashes, result[2:])}, return_compressed
             )
 
         return results
@@ -474,11 +475,11 @@ class DefinedIndex:
             for _ in self._connection.execute(sql_query, sql_params).fetchall()
         }
 
-    def pop(self, ids=None, query={}, n=1, sort_by=None, reversed_sort=False):
+    def pop(self, ids=None, query={}, n=1, sort_by=None, reversed_sort=False, return_compressed=False):
         if ids is not None:
             return {
                 row[0]: self.deserialize_record(
-                    {h: val for h, val in zip(self.column_names, row[2:]) if h in self.key_hash_to_original_key}
+                    {h: val for h, val in zip(self.column_names, row[2:]) if h in self.key_hash_to_original_key}, return_compressed
                 )
                 for row in self._connection.execute(
                     f"DELETE FROM {self.name} WHERE id IN ({', '.join(['?' for _ in ids])}) RETURNING *",
@@ -498,7 +499,7 @@ class DefinedIndex:
 
             return {
                 row[0]: self.deserialize_record(
-                    {h: val for h, val in zip(self.column_names, row[2:]) if h in self.key_hash_to_original_key}
+                    {h: val for h, val in zip(self.column_names, row[2:]) if h in self.key_hash_to_original_key}, return_compressed
                 )
                 for row in self._connection.execute(sql_query, sql_params).fetchall()
             }
