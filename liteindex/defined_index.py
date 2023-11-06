@@ -45,7 +45,7 @@ class DefinedIndex:
         example=None,
         import_from_file=None,
         file_type=None,
-        db_path=":memory:",
+        db_path=None,
         ram_cache_mb=64,
     ):
         if name.startswith("__"):
@@ -74,7 +74,7 @@ class DefinedIndex:
         self.schema = schema
         self.hashed_key_schema = {}
         self.meta_table_name = f"__{name}_meta"
-        self.db_path = db_path
+        self.db_path = ":memory:" if db_path is None else db_path
         self.key_hash_to_original_key = {}
         self.original_key_to_key_hash = {}
         self.column_names = []
