@@ -294,17 +294,10 @@ class DefinedIndex:
 
         self._connection.commit()
 
-    def update(self, data, custom_update_times_list=None):
+    def update(self, data):
         ids_grouped_by_common_keys = {}
 
-        custom_update_times_ordered = (
-            [] if custom_update_times_list is not None else None
-        )
-
         for i, (k, _data) in enumerate(data.items()):
-            if custom_update_times_ordered is not None:
-                custom_update_times_ordered.append(custom_update_times_list[i])
-
             keys = tuple(
                 __ for _, __ in self.original_key_to_key_hash.items() if _ in _data
             )
@@ -314,12 +307,10 @@ class DefinedIndex:
 
             ids_grouped_by_common_keys[keys].append(k)
 
-        __i = 0
-
         with self._connection:
-            for keys, ids_group in ids_grouped_by_common_keys.items():
-                updated_at = time.time()
+            updated_at = time.time()
 
+            for keys, ids_group in ids_grouped_by_common_keys.items():
                 transactions = []
 
                 all_columns = ("id", "updated_at") + keys
@@ -336,13 +327,7 @@ class DefinedIndex:
                     _data = self.serialize_record(data[k])
 
                     _data["id"] = k
-                    _data["updated_at"] = (
-                        updated_at
-                        if custom_update_times_list is None
-                        else custom_update_times_ordered[__i]
-                    )
-                    __i += 1
-
+                    _data["updated_at"] = updated_at
                     transactions.append([_data[key] for key in all_columns])
 
                 self._connection.executemany(sql, transactions)
@@ -391,7 +376,7 @@ class DefinedIndex:
     def search(
         self,
         query={},
-        sort_by="updated_at",
+        sort_by=None,
         reversed_sort=False,
         n=None,
         page_no=None,
@@ -401,7 +386,7 @@ class DefinedIndex:
         if {k for k in query if k not in self.schema or self.schema[k] in {"other"}}:
             raise ValueError("Invalid query")
 
-        if sort_by != "updated_at":
+        if sort_by:
             if sort_by not in self.schema or self.schema[sort_by] in {
                 "other",
                 "string",
@@ -423,7 +408,7 @@ class DefinedIndex:
             table_name=self.name,
             query={self.original_key_to_key_hash[k]: v for k, v in query.items()},
             schema=self.hashed_key_schema,
-            sort_by=sort_by,
+            sort_by=sort_by if sort_by is not None else "updated_at",
             reversed_sort=reversed_sort,
             n=n,
             page=page_no,
@@ -489,13 +474,13 @@ class DefinedIndex:
             for _ in self._connection.execute(sql_query, sql_params).fetchall()
         }
 
-    def pop(self, ids=None, query={}, n=1, sort_by="updated_at", reversed_sort=False):
+    def pop(self, ids=None, query={}, n=1, sort_by=None, reversed_sort=False):
         if query:
             sql_query, sql_params = pop_query(
                 table_name=self.name,
                 query={self.original_key_to_key_hash[k]: v for k, v in query.items()},
                 schema=self.hashed_key_schema,
-                sort_by=sort_by,
+                sort_by=sort_by if sort_by is not None else "updated_at",
                 reversed_sort=reversed_sort,
                 n=n,
             )
