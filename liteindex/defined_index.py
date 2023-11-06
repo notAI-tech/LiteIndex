@@ -10,6 +10,11 @@ import pickle
 import sqlite3
 import datetime
 
+try:
+    import zstandard
+except:
+    zstandard = None
+
 from .query_parser import (
     search_query,
     distinct_query,
@@ -114,7 +119,9 @@ class DefinedIndex:
 
             elif self.schema[k] == "other":
                 _record[self.original_key_to_key_hash[k]] = sqlite3.Binary(
-                    pickle.dumps(v)
+                    self._compressor.compress(pickle.dumps(v))
+                    if self._compressor is not False
+                    else pickle.dumps(v)
                 )
             elif self.schema[k] == "datetime":
                 _record[self.original_key_to_key_hash[k]] = v.timestamp()
@@ -123,11 +130,13 @@ class DefinedIndex:
             elif self.schema[k] == "boolean":
                 _record[self.original_key_to_key_hash[k]] = int(v)
             elif self.schema[k] == "blob":
-                _record[self.original_key_to_key_hash[k]] = sqlite3.Binary(v)
                 _record[f"__size_{self.original_key_to_key_hash[k]}"] = len(v)
                 _record[
                     f"__hash_{self.original_key_to_key_hash[k]}"
                 ] = common_utils.hash_bytes(v)
+                _record[self.original_key_to_key_hash[k]] = sqlite3.Binary(
+                    self._compressor.compress(v) if self._compressor is not False else v
+                )
             else:
                 _record[self.original_key_to_key_hash[k]] = v
 
@@ -140,7 +149,11 @@ class DefinedIndex:
                 _record[self.key_hash_to_original_key[k]] = None
 
             elif self.schema[self.key_hash_to_original_key[k]] == "other":
-                _record[self.key_hash_to_original_key[k]] = pickle.loads(v)
+                _record[self.key_hash_to_original_key[k]] = pickle.loads(
+                    self._decompressor.decompress(v)
+                    if self._decompressor is not False
+                    else v
+                )
             elif self.schema[self.key_hash_to_original_key[k]] == "datetime":
                 _record[
                     self.key_hash_to_original_key[k]
@@ -150,7 +163,11 @@ class DefinedIndex:
             elif self.schema[self.key_hash_to_original_key[k]] == "boolean":
                 _record[self.key_hash_to_original_key[k]] = bool(v)
             elif self.schema[self.key_hash_to_original_key[k]] == "blob":
-                _record[self.key_hash_to_original_key[k]] = bytes(v)
+                _record[self.key_hash_to_original_key[k]] = bytes(
+                    self._decompressor.decompress(v)
+                    if self._decompressor is not False
+                    else v
+                )
             else:
                 _record[self.key_hash_to_original_key[k]] = v
 
@@ -174,6 +191,28 @@ class DefinedIndex:
             )
 
         return self.local_storage.db_conn
+
+    @property
+    def _compressor(self):
+        if (
+            not hasattr(self.local_storage, "compressor")
+            or self.local_storage.compressor is None
+        ):
+            self.local_storage.compressor = (
+                zstandard.ZstdCompressor(level=3) if zstandard is not None else False
+            )
+        return self.local_storage.compressor
+
+    @property
+    def _decompressor(self):
+        if (
+            not hasattr(self.local_storage, "decompressor")
+            or self.local_storage.decompressor is None
+        ):
+            self.local_storage.decompressor = (
+                zstandard.ZstdDecompressor() if zstandard is not None else False
+            )
+        return self.local_storage.decompressor
 
     def _validate_set_schema_if_exists(self):
         try:
