@@ -381,7 +381,7 @@ class DefinedIndex:
         n=None,
         page_no=None,
         select_keys=[],
-        update=None,
+        update=None
     ):
         if {k for k in query if k not in self.schema or self.schema[k] in {"other"}}:
             raise ValueError("Invalid query")
@@ -475,7 +475,18 @@ class DefinedIndex:
         }
 
     def pop(self, ids=None, query={}, n=1, sort_by=None, reversed_sort=False):
-        if query:
+        if ids is not None:
+            return {
+                row[0]: self.deserialize_record(
+                    {h: val for h, val in zip(self.column_names, row[2:]) if h in self.key_hash_to_original_key}
+                )
+                for row in self._connection.execute(
+                    f"DELETE FROM {self.name} WHERE id IN ({', '.join(['?' for _ in ids])}) RETURNING *",
+                    ids,
+                ).fetchall()
+            }
+
+        elif query is not None:
             sql_query, sql_params = pop_query(
                 table_name=self.name,
                 query={self.original_key_to_key_hash[k]: v for k, v in query.items()},
@@ -485,16 +496,12 @@ class DefinedIndex:
                 n=n,
             )
 
-            return [
-                {
-                    self.key_hash_to_original_key[h]: val
-                    for h, val in zip(self.column_names, row[1:])
-                }
+            return {
+                row[0]: self.deserialize_record(
+                    {h: val for h, val in zip(self.column_names, row[2:]) if h in self.key_hash_to_original_key}
+                )
                 for row in self._connection.execute(sql_query, sql_params).fetchall()
-            ]
-
-        elif ids:
-            pass
+            }
 
         else:
             raise ValueError("Either ids or query must be provided")

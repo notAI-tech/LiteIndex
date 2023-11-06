@@ -94,7 +94,7 @@ def pop_query(
     schema,
     sort_by=None,
     reversed_sort=False,
-    n=None,
+    n=None
 ):
     # Prepare the query
     where_conditions, params = parse_query(query, schema)
@@ -102,27 +102,18 @@ def pop_query(
     # Build the query string
     query_str = f"DELETE FROM {table_name}"
     if where_conditions:
-        query_str += f" WHERE {' AND '.join(where_conditions)}"
+        query_str += f" WHERE id IN (SELECT id FROM {table_name} WHERE {' AND '.join(where_conditions)}"
+    else:
+        query_str += f" WHERE id IN (SELECT id FROM {table_name}"
+    
     if sort_by:
-        if isinstance(sort_by, list):
-            query_str += " ORDER BY "
-            sort_list = []
-            for sort_item in sort_by:
-                if isinstance(sort_item, tuple):
-                    sort_list.append(
-                        f"{sort_item[0]} {'DESC' if sort_item[1] else 'ASC'}"
-                    )
-                else:
-                    sort_list.append(
-                        f"{sort_item} {'DESC' if reversed_sort else 'ASC'}"
-                    )
-            query_str += ", ".join(sort_list)
-        else:
-            query_str += f" ORDER BY {sort_by} {'DESC' if reversed_sort else 'ASC'}"
+        query_str += f" ORDER BY {sort_by} {'DESC' if reversed_sort else 'ASC'}"
 
     if n is not None:
         query_str += f" LIMIT {n}"
-
+    
+    query_str += ")"
+    
     query_str += " RETURNING *"
 
     return query_str, params
