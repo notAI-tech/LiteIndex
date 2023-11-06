@@ -119,9 +119,9 @@ class DefinedIndex:
 
             elif self.schema[k] == "other":
                 _record[self.original_key_to_key_hash[k]] = sqlite3.Binary(
-                    self._compressor.compress(pickle.dumps(v))
+                    self._compressor.compress(pickle.dumps(v, protocol=5))
                     if self._compressor is not False
-                    else pickle.dumps(v)
+                    else pickle.dumps(v, protocol=5)
                 )
             elif self.schema[k] == "datetime":
                 _record[self.original_key_to_key_hash[k]] = v.timestamp()
@@ -265,7 +265,7 @@ class DefinedIndex:
                 self.column_names.append(f"__hash_{key_hash}")
 
             columns.append(f'"{key_hash}" {sql_column_type}')
-            meta_columns.append((key_hash, pickle.dumps(key), value_type))
+            meta_columns.append((key_hash, pickle.dumps(key, protocol=5), value_type))
             self.column_names.append(key_hash)
 
         columns_str = ", ".join(columns)
@@ -294,10 +294,17 @@ class DefinedIndex:
 
         self._connection.commit()
 
-    def update(self, data):
+    def update(self, data, custom_update_times_list=None):
         ids_grouped_by_common_keys = {}
 
-        for k, _data in data.items():
+        custom_update_times_ordered = (
+            [] if custom_update_times_list is not None else None
+        )
+
+        for i, (k, _data) in enumerate(data.items()):
+            if custom_update_times_ordered is not None:
+                custom_update_times_ordered.append(custom_update_times_list[i])
+
             keys = tuple(
                 __ for _, __ in self.original_key_to_key_hash.items() if _ in _data
             )
@@ -307,32 +314,38 @@ class DefinedIndex:
 
             ids_grouped_by_common_keys[keys].append(k)
 
-        for keys, ids_group in ids_grouped_by_common_keys.items():
-            updated_at = time.time()
+        __i = 0
 
-            transactions = []
+        with self._connection:
+            for keys, ids_group in ids_grouped_by_common_keys.items():
+                updated_at = time.time()
 
-            all_columns = ("id", "updated_at") + keys
+                transactions = []
 
-            columns = ", ".join([f'"{h}"' for h in all_columns])
-            values = ", ".join(["?" for _ in range(len(all_columns))])
-            updates = ", ".join(
-                [f'"{f}" = excluded."{f}"' for f in all_columns if f != "id"]
-            )
+                all_columns = ("id", "updated_at") + keys
 
-            sql = f"INSERT INTO {self.name} ({columns}) VALUES ({values}) ON CONFLICT(id) DO UPDATE SET {updates}"
+                columns = ", ".join([f'"{h}"' for h in all_columns])
+                values = ", ".join(["?" for _ in range(len(all_columns))])
+                updates = ", ".join(
+                    [f'"{f}" = excluded."{f}"' for f in all_columns if f != "id"]
+                )
 
-            for k in ids_group:
-                _data = self.serialize_record(data[k])
+                sql = f"INSERT INTO {self.name} ({columns}) VALUES ({values}) ON CONFLICT(id) DO UPDATE SET {updates}"
 
-                _data["id"] = k
-                _data["updated_at"] = updated_at
+                for k in ids_group:
+                    _data = self.serialize_record(data[k])
 
-                transactions.append([_data[key] for key in all_columns])
+                    _data["id"] = k
+                    _data["updated_at"] = (
+                        updated_at
+                        if custom_update_times_list is None
+                        else custom_update_times_ordered[__i]
+                    )
+                    __i += 1
 
-            self._connection.executemany(sql, transactions)
+                    transactions.append([_data[key] for key in all_columns])
 
-        self._connection.commit()
+                self._connection.executemany(sql, transactions)
 
     def get(self, ids, select_keys=[]):
         if isinstance(ids, str):
