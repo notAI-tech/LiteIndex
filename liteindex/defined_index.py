@@ -149,11 +149,15 @@ class DefinedIndex:
                 _record[self.key_hash_to_original_key[k]] = None
 
             elif self.schema[self.key_hash_to_original_key[k]] == "other":
-                _record[self.key_hash_to_original_key[k]] = pickle.loads(
-                    self._decompressor.decompress(v)
-                    if (self._decompressor is not False or return_compressed)
+                _record[self.key_hash_to_original_key[k]] = (
+                    pickle.loads(
+                        self._decompressor.decompress(v)
+                        if (self._decompressor is not False or return_compressed)
+                        else v
+                    )
+                    if not return_compressed
                     else v
-                ) if not return_compressed else v
+                )
             elif self.schema[self.key_hash_to_original_key[k]] == "datetime":
                 _record[
                     self.key_hash_to_original_key[k]
@@ -163,11 +167,15 @@ class DefinedIndex:
             elif self.schema[self.key_hash_to_original_key[k]] == "boolean":
                 _record[self.key_hash_to_original_key[k]] = bool(v)
             elif self.schema[self.key_hash_to_original_key[k]] == "blob":
-                _record[self.key_hash_to_original_key[k]] = bytes(
-                    self._decompressor.decompress(v)
-                    if self._decompressor is not False
+                _record[self.key_hash_to_original_key[k]] = (
+                    bytes(
+                        self._decompressor.decompress(v)
+                        if self._decompressor is not False
+                        else v
+                    )
+                    if not return_compressed
                     else v
-                ) if not return_compressed else v
+                )
             else:
                 _record[self.key_hash_to_original_key[k]] = v
 
@@ -270,29 +278,28 @@ class DefinedIndex:
 
         columns_str = ", ".join(columns)
 
-        self._connection.execute(
-            f"CREATE TABLE IF NOT EXISTS {self.name} (id TEXT PRIMARY KEY, updated_at NUMBER, {columns_str})"
-        )
+        with self._connection:
+            self._connection.execute(
+                f"CREATE TABLE IF NOT EXISTS {self.name} (id TEXT PRIMARY KEY, updated_at NUMBER, {columns_str})"
+            )
 
-        self._connection.execute(
-            f"CREATE INDEX IF NOT EXISTS idx_{self.name}_updated_at ON {self.name} (updated_at)"
-        )
+            self._connection.execute(
+                f"CREATE INDEX IF NOT EXISTS idx_{self.name}_updated_at ON {self.name} (updated_at)"
+            )
 
-        self._connection.execute(
-            f"CREATE TABLE IF NOT EXISTS {self.meta_table_name} "
-            "(hash TEXT PRIMARY KEY, pickled BLOB, value_type TEXT)"
-        )
+            self._connection.execute(
+                f"CREATE TABLE IF NOT EXISTS {self.meta_table_name} "
+                "(hash TEXT PRIMARY KEY, pickled BLOB, value_type TEXT)"
+            )
 
-        self._connection.executemany(
-            f"INSERT OR IGNORE INTO {self.meta_table_name} (hash, pickled, value_type) "
-            f"VALUES (?, ?, ?)",
-            [
-                (hash_val, sqlite3.Binary(pickled), value_type)
-                for hash_val, pickled, value_type in meta_columns
-            ],
-        )
-
-        self._connection.commit()
+            self._connection.executemany(
+                f"INSERT OR IGNORE INTO {self.meta_table_name} (hash, pickled, value_type) "
+                f"VALUES (?, ?, ?)",
+                [
+                    (hash_val, sqlite3.Binary(pickled), value_type)
+                    for hash_val, pickled, value_type in meta_columns
+                ],
+            )
 
     def update(self, data):
         ids_grouped_by_common_keys = {}
@@ -364,14 +371,15 @@ class DefinedIndex:
 
     def clear(self):
         # CLEAR function: deletes the content of the table but keeps the table itself and the metadata table
-        self._connection.execute(f"DROP TABLE IF EXISTS {self.name}")
-        self._create_table_and_meta_table()
+        with self._connection:
+            self._connection.execute(f"DROP TABLE IF EXISTS {self.name}")
+            self._create_table_and_meta_table()
 
     def drop(self):
         # DROP function: deletes both the table itself and the metadata table
-        self._connection.execute(f"DROP TABLE IF EXISTS {self.name}")
-        self._connection.execute(f"DROP TABLE IF EXISTS {self.meta_table_name}")
-        self._connection.commit()
+        with self._connection:
+            self._connection.execute(f"DROP TABLE IF EXISTS {self.name}")
+            self._connection.execute(f"DROP TABLE IF EXISTS {self.meta_table_name}")
 
     def search(
         self,
@@ -382,7 +390,7 @@ class DefinedIndex:
         page_no=None,
         select_keys=[],
         update=None,
-        return_compressed=False
+        return_compressed=False,
     ):
         if {k for k in query if k not in self.schema or self.schema[k] in {"other"}}:
             raise ValueError("Invalid query")
@@ -442,7 +450,8 @@ class DefinedIndex:
         for result in _results:
             _id, updated_at = result[:2]
             results[_id] = self.deserialize_record(
-                {h: val for h, val in zip(select_keys_hashes, result[2:])}, return_compressed
+                {h: val for h, val in zip(select_keys_hashes, result[2:])},
+                return_compressed,
             )
 
         return results
@@ -475,17 +484,31 @@ class DefinedIndex:
             for _ in self._connection.execute(sql_query, sql_params).fetchall()
         }
 
-    def pop(self, ids=None, query={}, n=1, sort_by=None, reversed_sort=False, return_compressed=False):
+    def pop(
+        self,
+        ids=None,
+        query={},
+        n=1,
+        sort_by=None,
+        reversed_sort=False,
+        return_compressed=False,
+    ):
         if ids is not None:
-            return {
-                row[0]: self.deserialize_record(
-                    {h: val for h, val in zip(self.column_names, row[2:]) if h in self.key_hash_to_original_key}, return_compressed
-                )
-                for row in self._connection.execute(
-                    f"DELETE FROM {self.name} WHERE id IN ({', '.join(['?' for _ in ids])}) RETURNING *",
-                    ids,
-                ).fetchall()
-            }
+            with self._connection:
+                return {
+                    row[0]: self.deserialize_record(
+                        {
+                            h: val
+                            for h, val in zip(self.column_names, row[2:])
+                            if h in self.key_hash_to_original_key
+                        },
+                        return_compressed,
+                    )
+                    for row in self._connection.execute(
+                        f"DELETE FROM {self.name} WHERE id IN ({', '.join(['?' for _ in ids])}) RETURNING *",
+                        ids,
+                    ).fetchall()
+                }
 
         elif query is not None:
             sql_query, sql_params = pop_query(
@@ -497,12 +520,20 @@ class DefinedIndex:
                 n=n,
             )
 
-            return {
-                row[0]: self.deserialize_record(
-                    {h: val for h, val in zip(self.column_names, row[2:]) if h in self.key_hash_to_original_key}, return_compressed
-                )
-                for row in self._connection.execute(sql_query, sql_params).fetchall()
-            }
+            with self._connection:
+                return {
+                    row[0]: self.deserialize_record(
+                        {
+                            h: val
+                            for h, val in zip(self.column_names, row[2:])
+                            if h in self.key_hash_to_original_key
+                        },
+                        return_compressed,
+                    )
+                    for row in self._connection.execute(
+                        sql_query, sql_params
+                    ).fetchall()
+                }
 
         else:
             raise ValueError("Either ids or query must be provided")
