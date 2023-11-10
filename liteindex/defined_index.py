@@ -671,3 +671,7 @@ class DefinedIndex:
 
     def delete_trigger(self, trigger_name):
         self._connection.execute(f"DROP TRIGGER {trigger_name};")
+    
+    def vaccum(self):
+        self._connection.execute("VACUUM")
+        self._connection.commit()
