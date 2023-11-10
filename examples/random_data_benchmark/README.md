@@ -34,10 +34,3 @@
 | Batch of: | 1 | 4 | 16 | 64 | 256 |
 | --- | --- | --- | --- | --- | --- |
 
-#### Storing images and their metadata 
-- ..
-
-
-
-#### Storing large textual data 
-- Enron email dataset

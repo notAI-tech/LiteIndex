@@ -21,16 +21,19 @@ BENCHMARKS = {
     "liteindex": {
         "insertion": [],
         "pop": [],
+        "read": [],
         "batch_size": []
     },
     "diskcache": {
         "insertion": [],
         "pop": [],
+        "read": [],
         "batch_size": []
     },
     "sqlitedict": {
         "insertion": [],
         "pop": [],
+        "read": [],
         "batch_size": []
     }
 }
@@ -91,6 +94,38 @@ for batch_size in [1, 4, 16, 64, 256]:
 
     BENCHMARKS["sqlitedict"]["insertion"].append(sqlitedict_insertion_time / N)
     BENCHMARKS["sqlitedict"]["batch_size"].append(batch_size)
+
+# pop times
+for batch_size in [1, 4, 16, 64, 256]:
+    liteindex_pop_time = 0
+    diskcache_pop_time = 0
+    sqlitedict_pop_time = 0
+
+    for i in tqdm(range(0, N, batch_size)):
+        batch = list(liteindex_index.pop(batch_size=batch_size).values())
+        start_time = time.time()
+        liteindex_index.update(batch)
+        liteindex_pop_time += (time.time() - start_time)
+
+        batch = {k: v["data"] for k, v in batch.items()}
+
+        start_time = time.time()
+        with diskcache_index.transact():
+            for k, v in batch.items():
+                diskcache_index[k] = v
+        
+        diskcache_pop_time += (time.time() - start_time)
+
+        start_time = time.time()
+        sqlitedict_index.update(batch)
+        sqlitedict_pop_time += (time.time() - start_time)
+
+    
+    print(f"Batch Size: {batch_size} pop finished, liteindex_count: {liteindex_index.count()}, diskcache_count: {len(diskcache_index)}, sqlitedict_count: {len(sqlitedict_index)}")
+
+    BENCHMARKS["liteindex"]["pop"].append(liteindex_pop_time / N)
+    BENCHMARKS["diskcache"]["pop"].append(diskcache_pop_time / N)
+    BENCHMARKS["sqlitedict"]["pop"].append(sqlitedict_pop_time / N)
 
 
 import json
