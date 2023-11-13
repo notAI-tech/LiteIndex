@@ -102,30 +102,22 @@ for batch_size in [1, 4, 16, 64, 256]:
     sqlitedict_pop_time = 0
 
     for i in tqdm(range(0, N, batch_size)):
-        batch = list(liteindex_index.pop(batch_size=batch_size).values())
         start_time = time.time()
-        liteindex_index.update(batch)
+        liteindex_index.pop(n=batch_size)
         liteindex_pop_time += (time.time() - start_time)
-
-        batch = {k: v["data"] for k, v in batch.items()}
 
         start_time = time.time()
         with diskcache_index.transact():
-            for k, v in batch.items():
-                diskcache_index[k] = v
+            for _ in range(batch_size):
+                diskcache_index.popitem()
         
         diskcache_pop_time += (time.time() - start_time)
 
-        start_time = time.time()
-        sqlitedict_index.update(batch)
-        sqlitedict_pop_time += (time.time() - start_time)
-
     
-    print(f"Batch Size: {batch_size} pop finished, liteindex_count: {liteindex_index.count()}, diskcache_count: {len(diskcache_index)}, sqlitedict_count: {len(sqlitedict_index)}")
+    print(f"Batch Size: {batch_size} pop finished, liteindex_count: {liteindex_index.count()}, diskcache_count: {len(diskcache_index)}")
 
     BENCHMARKS["liteindex"]["pop"].append(liteindex_pop_time / N)
     BENCHMARKS["diskcache"]["pop"].append(diskcache_pop_time / N)
-    BENCHMARKS["sqlitedict"]["pop"].append(sqlitedict_pop_time / N)
 
 
 import json
@@ -152,6 +144,7 @@ def plot_bar_graph(x, y1, y2, y3, title, xlabel, ylabel):
     plt.title(title)
 
     plt.legend()
+    plt.savefig(f"{title}.png")
     plt.show()
 
 # Insertion Times Bar Graph

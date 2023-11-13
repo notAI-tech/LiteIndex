@@ -26,11 +26,11 @@ def generate_leaf(types):
         # Generate int
         return random.randint(1, 100000000000000000)/ random.randint(1, 100000000000000000)
     elif leaf_type == "string":
-        # Generate string
-        return "abcdefghij klmnop qrstuv wxyz" * random.randint(1, 1000)
+        # Generate random string of random size from length 1 to 1000
+        return ''.join(random.choice(string.ascii_letters) for i in range(random.randint(1, 2000)))
     elif leaf_type == "numpy":
         # Generate numpy array
-        return np.random.rand(random.randint(1, 500))
+        return np.random.rand(random.randint(1, 1000))
     elif leaf_type == "bytes":
         # Generate bytes
         return random.randbytes(random.randint(1, 2000))
