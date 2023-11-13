@@ -83,6 +83,8 @@ class DefinedIndex:
             "boolean": "INTEGER",
             "number": "NUMBER",
             "string": "TEXT",
+            "flatlist": "TEXT",
+            "flatdict": "TEXT",
             "json": "JSON",
             "blob": "BLOB",
             "datetime": "NUMBER",
