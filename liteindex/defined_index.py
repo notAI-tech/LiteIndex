@@ -47,6 +47,7 @@ class DefinedIndex:
         file_type=None,
         db_path=None,
         ram_cache_mb=64,
+        examples_for_compression = []
     ):
         if name.startswith("__"):
             raise ValueError("Index name cannot start with '__'")
@@ -74,17 +75,21 @@ class DefinedIndex:
         self.schema = schema
         self.hashed_key_schema = {}
         self.meta_table_name = f"__{name}_meta"
+        self.list_table_name = f"__{name}_list"
+        self.dict_table_name = f"__{name}_dict"
         self.db_path = ":memory:" if db_path is None else db_path
         self.key_hash_to_original_key = {}
         self.original_key_to_key_hash = {}
         self.column_names = []
+        self.flatlist_columns = []
+        self.flatdict_columns = []
 
         self.schema_property_to_column_type = {
             "boolean": "INTEGER",
             "number": "NUMBER",
             "string": "TEXT",
-            "flatlist": "TEXT",
-            "flatdict": "TEXT",
+            "flatlist": "FLATLIST",
+            "flatdict": "FLATDICT",
             "json": "JSON",
             "blob": "BLOB",
             "datetime": "NUMBER",
@@ -105,6 +110,21 @@ class DefinedIndex:
 
         if not self.schema:
             raise ValueError("Schema must be provided")
+
+        if examples_for_compression:
+            key_wise_data = {}
+            for example in examples_for_compression:
+                example = self.serialize_record(example)
+                for k in example:
+                    if self.schema[self.key_hash_to_original_key[k]] in {"blob", "other", "text", "flatlist", "flatdict", "json"}:
+                        if k not in key_wise_data:
+                            key_wise_data[k] = []
+                        key_wise_data[k].append(example[k])
+            
+            for k in key_wise_data:
+                zstd_dict = zstandard.train_dictionary(4*1024, key_wise_data[k], level=3)
+                
+
 
         self._parse_schema()
         self._create_table_and_meta_table()
@@ -265,24 +285,53 @@ class DefinedIndex:
     def _create_table_and_meta_table(self):
         columns = []
         meta_columns = []
+
         for key, value_type in self.schema.items():
             key_hash = self.original_key_to_key_hash[key]
             sql_column_type = self.schema_property_to_column_type[value_type]
-            if value_type == "blob":
-                columns.append(f'"__size_{key_hash}" NUMBER')
-                self.column_names.append(f"__size_{key_hash}")
-                columns.append(f'"__hash_{key_hash}" TEXT')
-                self.column_names.append(f"__hash_{key_hash}")
+            if value_type not in {"flatlist", "flatdict"}:
+                if value_type == "blob":
+                    columns.append(f'"__size_{key_hash}" NUMBER')
+                    self.column_names.append(f"__size_{key_hash}")
+                    columns.append(f'"__hash_{key_hash}" TEXT')
+                    self.column_names.append(f"__hash_{key_hash}")
 
-            columns.append(f'"{key_hash}" {sql_column_type}')
+                columns.append(f'"{key_hash}" {sql_column_type}')
+                self.column_names.append(key_hash)
+            elif value_type == "flatlist":
+                self.flatlist_columns.append(key_hash)
+            elif value_type == "flatdict":
+                self.flatdict_columns.append(key_hash)
+            
             meta_columns.append((key_hash, pickle.dumps(key, protocol=5), value_type))
-            self.column_names.append(key_hash)
 
         columns_str = ", ".join(columns)
 
         with self._connection:
             self._connection.execute(
                 f"CREATE TABLE IF NOT EXISTS {self.name} (id TEXT PRIMARY KEY, updated_at NUMBER, {columns_str})"
+            )
+
+            self._connection.execute(
+                f"""CREATE TABLE IF NOT EXISTS {self.list_table_name} (
+                    id TEXT,
+                    ind INTEGER,
+                    num NUMBER,
+                    text TEXT,
+                    PRIMARY KEY (id, ind),
+                    FOREIGN KEY (id) REFERENCES {self.name}(id)
+                )"""
+            )
+
+            self._connection.execute(
+                f"""CREATE TABLE IF NOT EXISTS {self.dict_table_name} (
+                    id TEXT,
+                    key TEXT,
+                    num INTEGER,
+                    text TEXT,
+                    PRIMARY KEY (id, key),
+                    FOREIGN KEY (id) REFERENCES {self.name}(id)
+                )"""
             )
 
             self._connection.execute(
@@ -305,10 +354,32 @@ class DefinedIndex:
 
     def update(self, data):
         ids_grouped_by_common_keys = {}
+        
+        flatlist_data = {}
+        flatdict_data = {}
 
-        for i, (k, _data) in enumerate(data.items()):
+        for i, _id in enumerate(data.keys()):
+            for k in self.flatlist_columns:
+                hash_k = self.key_hash_to_original_key[k]
+                try:
+                    flatdict_data[(_id, hash_k)] = data[_id].pop(self.key_hash_to_original_key[hash_k])
+                except:
+                    pass
+            
+            for k in self.flatdict_columns:
+                try:
+                    flatdict_data[(_id, k)] = data[_id].pop(self.key_hash_to_original_key[k])
+                except:
+                    pass
+            
+            for k in self.flatdict_columns:
+                try:
+                    flatdict_data[k] = data[_id].pop(k)
+                except:
+                    pass
+
             keys = tuple(
-                __ for _, __ in self.original_key_to_key_hash.items() if _ in _data
+                __ for _, __ in self.original_key_to_key_hash.items() if _ in data[_id]
             )
 
             if keys not in ids_grouped_by_common_keys:
@@ -333,11 +404,11 @@ class DefinedIndex:
                 sql = f"INSERT INTO {self.name} ({columns}) VALUES ({values}) ON CONFLICT(id) DO UPDATE SET {updates}"
 
                 for k in ids_group:
-                    _data = self.serialize_record(data[k])
+                    data[_id] = self.serialize_record(data[k])
 
-                    _data["id"] = k
-                    _data["updated_at"] = updated_at
-                    transactions.append([_data[key] for key in all_columns])
+                    data[_id]["id"] = k
+                    data[_id]["updated_at"] = updated_at
+                    transactions.append([data[_id][key] for key in all_columns])
 
                 self._connection.executemany(sql, transactions)
 
