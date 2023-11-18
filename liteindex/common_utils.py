@@ -13,17 +13,3 @@ def set_ulimit():
             break
         except:
             limit = limit // 2
-
-
-# ----------- Hash for bytes -----------
-"""
-handle large bytes as well by usin 2048 bytes chunks
-"""
-
-import hashlib
-
-
-def hash_bytes(data):
-    hash_obj = hashlib.sha256(data)
-    hex_dig = hash_obj.hexdigest()
-    return hex_dig

@@ -1,4 +1,5 @@
 from . import common_utils
+from . import defined_serializers
 
 common_utils.set_ulimit()
 
@@ -47,53 +48,54 @@ class DefinedIndex:
         file_type=None,
         db_path=None,
         ram_cache_mb=64,
-        examples_for_compression = []
+        examples_for_compression = [],
+        compression_level=-1,
     ):
         if name.startswith("__"):
             raise ValueError("Index name cannot start with '__'")
 
         self.name = name
-        self.ram_cache_mb = ram_cache_mb
-        if not schema and example:
-            schema = {}
-            for k, v in example.items():
-                if isinstance(v, bool):
-                    schema[k] = "boolean"
-                elif isinstance(v, int) or isinstance(v, float):
-                    schema[k] = "number"
-                elif isinstance(v, str):
-                    schema[k] = "string"
-                elif isinstance(v, dict) or isinstance(v, list):
-                    schema[k] = "json"
-                elif isinstance(v, bytes):
-                    schema[k] = "blob"
-                elif isinstance(v, datetime.datetime):
-                    schema[k] = "datetime"
-                else:
-                    schema[k] = "other"
+        self.meta_table_name = f"__{name}_meta"
+        self.lists_and_dicts_table_name = f"__{name}_lists_and_dicts"
 
+        self.ram_cache_mb = ram_cache_mb
         self.schema = schema
         self.hashed_key_schema = {}
-        self.meta_table_name = f"__{name}_meta"
-        self.list_table_name = f"__{name}_list"
-        self.dict_table_name = f"__{name}_dict"
         self.db_path = ":memory:" if db_path is None else db_path
         self.key_hash_to_original_key = {}
         self.original_key_to_key_hash = {}
         self.column_names = []
-        self.flatlist_columns = []
-        self.flatdict_columns = []
-
+        self.list_dict_keys_info = {}
+        
         self.schema_property_to_column_type = {
             "boolean": "INTEGER",
-            "number": "NUMBER",
+            "boolean[]": None,
+            "string:boolean": None,
+
             "string": "TEXT",
-            "flatlist": "FLATLIST",
-            "flatdict": "FLATDICT",
-            "json": "JSON",
-            "blob": "BLOB",
+            "string[]": None,
+            "string:string": None,
+
+            "number": "NUMBER",
+            "number[]": None,
+            "string:number": None,
+            
             "datetime": "NUMBER",
+            "datetime[]": None,
+            "string:datetime": None,
+            
+            "compressed_string": "BLOB",
+            "compressed_string[]": None,
+            "string:compressed_string": None,
+            
+            "blob": "BLOB",
+            "blob[]": None,
+            "string:blob": None,
+            
             "other": "BLOB",
+            
+            "json": "JSON",
+            "compressed_json": "BLOB",
         }
 
         if not db_path == ":memory:":
@@ -122,86 +124,20 @@ class DefinedIndex:
                         key_wise_data[k].append(example[k])
             
             for k in key_wise_data:
-                zstd_dict = zstandard.train_dictionary(4*1024, key_wise_data[k], level=3)
-                
-
-
+                zstd_dict = zstandard.train_dictionary(4*1024, key_wise_data[k], level=compression_level)
+        
+        elif compression_level is None:
+            self._compressor = False
+            self._decompressor = False
+            zstandard = None
+        
+        self.compression_level = compression_level
         self._parse_schema()
         self._create_table_and_meta_table()
 
     def __del__(self):
         if self._connection:
             self._connection.close()
-
-    def serialize_record(self, record):
-        _record = {}
-        for k, v in record.items():
-            if v is None:
-                _record[self.original_key_to_key_hash[k]] = None
-
-            elif self.schema[k] == "other":
-                _record[self.original_key_to_key_hash[k]] = sqlite3.Binary(
-                    self._compressor.compress(pickle.dumps(v, protocol=5))
-                    if self._compressor is not False
-                    else pickle.dumps(v, protocol=5)
-                )
-            elif self.schema[k] == "datetime":
-                _record[self.original_key_to_key_hash[k]] = v.timestamp()
-            elif self.schema[k] == "json":
-                _record[self.original_key_to_key_hash[k]] = json.dumps(v)
-            elif self.schema[k] == "boolean":
-                _record[self.original_key_to_key_hash[k]] = int(v)
-            elif self.schema[k] == "blob":
-                _record[f"__size_{self.original_key_to_key_hash[k]}"] = len(v)
-                _record[
-                    f"__hash_{self.original_key_to_key_hash[k]}"
-                ] = common_utils.hash_bytes(v)
-                _record[self.original_key_to_key_hash[k]] = sqlite3.Binary(
-                    self._compressor.compress(v) if self._compressor is not False else v
-                )
-            else:
-                _record[self.original_key_to_key_hash[k]] = v
-
-        return _record
-
-    def deserialize_record(self, record, return_compressed=False):
-        _record = {}
-        for k, v in record.items():
-            if v is None:
-                _record[self.key_hash_to_original_key[k]] = None
-
-            elif self.schema[self.key_hash_to_original_key[k]] == "other":
-                _record[self.key_hash_to_original_key[k]] = (
-                    pickle.loads(
-                        self._decompressor.decompress(v)
-                        if (self._decompressor is not False or return_compressed)
-                        else v
-                    )
-                    if not return_compressed
-                    else v
-                )
-            elif self.schema[self.key_hash_to_original_key[k]] == "datetime":
-                _record[
-                    self.key_hash_to_original_key[k]
-                ] = datetime.datetime.fromtimestamp(v)
-            elif self.schema[self.key_hash_to_original_key[k]] == "json":
-                _record[self.key_hash_to_original_key[k]] = json.loads(v)
-            elif self.schema[self.key_hash_to_original_key[k]] == "boolean":
-                _record[self.key_hash_to_original_key[k]] = bool(v)
-            elif self.schema[self.key_hash_to_original_key[k]] == "blob":
-                _record[self.key_hash_to_original_key[k]] = (
-                    bytes(
-                        self._decompressor.decompress(v)
-                        if self._decompressor is not False
-                        else v
-                    )
-                    if not return_compressed
-                    else v
-                )
-            else:
-                _record[self.key_hash_to_original_key[k]] = v
-
-        return _record
 
     @property
     def _connection(self):
@@ -229,7 +165,7 @@ class DefinedIndex:
             or self.local_storage.compressor is None
         ):
             self.local_storage.compressor = (
-                zstandard.ZstdCompressor(level=3) if zstandard is not None else False
+                zstandard.ZstdCompressor(level=self.compression_level) if zstandard is not None else False
             )
         return self.local_storage.compressor
 
@@ -289,8 +225,8 @@ class DefinedIndex:
         for key, value_type in self.schema.items():
             key_hash = self.original_key_to_key_hash[key]
             sql_column_type = self.schema_property_to_column_type[value_type]
-            if value_type not in {"flatlist", "flatdict"}:
-                if value_type == "blob":
+            if sql_column_type is not None:
+                if value_type in {"blob", "other"}:
                     columns.append(f'"__size_{key_hash}" NUMBER')
                     self.column_names.append(f"__size_{key_hash}")
                     columns.append(f'"__hash_{key_hash}" TEXT')
@@ -298,10 +234,6 @@ class DefinedIndex:
 
                 columns.append(f'"{key_hash}" {sql_column_type}')
                 self.column_names.append(key_hash)
-            elif value_type == "flatlist":
-                self.flatlist_columns.append(key_hash)
-            elif value_type == "flatdict":
-                self.flatdict_columns.append(key_hash)
             
             meta_columns.append((key_hash, pickle.dumps(key, protocol=5), value_type))
 
@@ -313,23 +245,15 @@ class DefinedIndex:
             )
 
             self._connection.execute(
-                f"""CREATE TABLE IF NOT EXISTS {self.list_table_name} (
+                f"""CREATE TABLE IF NOT EXISTS {self.lists_and_dicts_table_name} (
                     id TEXT,
-                    ind INTEGER,
+                    column_index INTEGER,
+                    list_index INTEGER,
+                    dict_key TEXT,
                     num NUMBER,
                     text TEXT,
-                    PRIMARY KEY (id, ind),
-                    FOREIGN KEY (id) REFERENCES {self.name}(id)
-                )"""
-            )
-
-            self._connection.execute(
-                f"""CREATE TABLE IF NOT EXISTS {self.dict_table_name} (
-                    id TEXT,
-                    key TEXT,
-                    num INTEGER,
-                    text TEXT,
-                    PRIMARY KEY (id, key),
+                    blob BLOB,
+                    PRIMARY KEY (id, column_index, list_index, dict_key),
                     FOREIGN KEY (id) REFERENCES {self.name}(id)
                 )"""
             )
@@ -353,47 +277,31 @@ class DefinedIndex:
             )
 
     def update(self, data):
-        ids_grouped_by_common_keys = {}
+        ids_grouped_by_common_key_hashes = {}
         
-        flatlist_data = {}
-        flatdict_data = {}
+        lists_and_dicts_table_data = {}
 
         for i, _id in enumerate(data.keys()):
-            for k in self.flatlist_columns:
-                hash_k = self.key_hash_to_original_key[k]
-                try:
-                    flatdict_data[(_id, hash_k)] = data[_id].pop(self.key_hash_to_original_key[hash_k])
-                except:
-                    pass
+            for k in data[_id].keys():
+                if k in self.flatlist_column_hashes_to_index:
             
-            for k in self.flatdict_columns:
-                try:
-                    flatdict_data[(_id, k)] = data[_id].pop(self.key_hash_to_original_key[k])
-                except:
-                    pass
-            
-            for k in self.flatdict_columns:
-                try:
-                    flatdict_data[k] = data[_id].pop(k)
-                except:
-                    pass
 
-            keys = tuple(
-                __ for _, __ in self.original_key_to_key_hash.items() if _ in data[_id]
+            ordered_key_hashes = tuple(
+                key_hash for key, key_hash in self.original_key_to_key_hash.items() if key in data[_id]
             )
 
-            if keys not in ids_grouped_by_common_keys:
-                ids_grouped_by_common_keys[keys] = []
+            if ordered_key_hashes not in ids_grouped_by_common_key_hashes:
+                ids_grouped_by_common_key_hashes[ordered_key_hashes] = []
 
-            ids_grouped_by_common_keys[keys].append(k)
+            ids_grouped_by_common_key_hashes[ordered_key_hashes].append(_id)
 
         with self._connection:
             updated_at = time.time()
 
-            for keys, ids_group in ids_grouped_by_common_keys.items():
+            for ordered_key_hashes, ids_group in ids_grouped_by_common_key_hashes.items():
                 transactions = []
 
-                all_columns = ("id", "updated_at") + keys
+                all_columns = ("id", "updated_at") + ordered_key_hashes
 
                 columns = ", ".join([f'"{h}"' for h in all_columns])
                 values = ", ".join(["?" for _ in range(len(all_columns))])
@@ -403,14 +311,42 @@ class DefinedIndex:
 
                 sql = f"INSERT INTO {self.name} ({columns}) VALUES ({values}) ON CONFLICT(id) DO UPDATE SET {updates}"
 
-                for k in ids_group:
-                    data[_id] = self.serialize_record(data[k])
+                for _id in ids_group:
+                    data[_id] = defined_serializers.serialize_record(
+                        self.original_key_to_key_hash,
+                        self.schema,
+                        data[_id],
+                        self._compressor,
+                    )
 
-                    data[_id]["id"] = k
+                    data[_id]["id"] = _id
                     data[_id]["updated_at"] = updated_at
                     transactions.append([data[_id][key] for key in all_columns])
 
                 self._connection.executemany(sql, transactions)
+            
+            transactions = []
+            all_columns = ("id", "column_index", "ind", "num", "text")
+            for (_id, column_index), _list in flatlist_data.items():
+                for ind, value in enumerate(_list):
+                    transactions.append((_id, column_index, ind, None, value) if isinstance(value, str) else (_id, column_index, ind, value, None))
+
+            self._connection.executemany(
+                f"INSERT OR REPLACE INTO {self.list_table_name} ({', '.join(all_columns)}) VALUES (?, ?, ?, ?, ?)",
+                transactions,
+            )
+
+            transactions = []
+            all_columns = ("id", "column_index", "key", "num", "text")
+            for (_id, column_index), _dict in flatdict_data.items():
+                for key, value in _dict.items():
+                    transactions.append((_id, column_index, key, None, value) if isinstance(value, str) else (_id, column_index, key, value, None))
+            
+            self._connection.executemany(
+                f"INSERT OR REPLACE INTO {self.dict_table_name} ({', '.join(all_columns)}) VALUES (?, ?, ?, ?, ?)",
+                transactions,
+            )
+
 
     def get(self, ids, select_keys=[], return_compressed=False):
         if isinstance(ids, str):
@@ -426,13 +362,22 @@ class DefinedIndex:
 
             select_keys = [self.original_key_to_key_hash[k] for k in select_keys]
 
-        # Prepare the SQL command
-        columns = ", ".join([f'"{h}"' for h in select_keys])
-        column_str = "id, " + columns  # Update this to include `id`
+        table_wise_keys_to_select = {
+            self.name: [],
+            self.list_table_name: [],
+            self.dict_table_name: [],
+        }
 
-        # Format the ids for the where clause
-        id_placeholders = ", ".join(["?" for _ in ids])
-        sql = f"SELECT {column_str} FROM {self.name} WHERE id IN ({id_placeholders})"
+        for k in select_keys:
+            if k in self.flatlist_column_hashes_to_index:
+                table_wise_keys_to_select[self.list_table_name].append(k)
+            elif k in self.flatdict_column_hashes_to_index:
+                table_wise_keys_to_select[self.dict_table_name].append(k)
+            else:
+                table_wise_keys_to_select[self.name].append(k)
+
+
+        # TODO: finish this
 
         result = {}
         for row in self._connection.execute(sql, ids).fetchall():

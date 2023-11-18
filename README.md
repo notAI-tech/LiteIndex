@@ -1,5 +1,5 @@
 # LiteIndex
-in-process, thread and process safe, easy to use, query-able object storage implenetation for Python
+Embedded, thread and process safe, easy to use, query-able document store for Python
 
 ### Some use cases, benchmarks and examples:
 - persistent, fast in-process caches and query-able queues
@@ -19,39 +19,10 @@ pip install --upgrade liteindex
 ## DefinedIndex
 
 - [Documentation](https://github.com/notAI-tech/LiteIndex/blob/main/DefinedIndex.md)
-- `schema` has to be specified when creating a new DefinedIndex
-- Any python object can be stored in DefinedIndex
-- Query language is copy of mongodb queries. All queries are documented.
-- Querying can be done on `string`, `number`, `boolean`, `json`, `datetime` fields.
-- Math can be done on `number` fields
-- `blob` values can be queried for equality (same file), size.
-- `other` values can only be set, deleted, updated. Cannot be queried upon.
-- Insertion order is preserved 
-
-```python
-from liteindex import DefinedIndex
-
-user_details_schema = {
-    "name": "string",
-    "age": "number",
-    "password": "string",
-    "verified": "boolean",
-    "address_details": "json",
-    "profile_picture": "blob",
-    "tag_line": "string",
-    "tag_line_embedding": "other",
-    "birth_day": "datetime"
-}
-
-# db path defaults to memory
-index = DefinedIndex(
-            name="user_details",
-            schema=schema,
-            db_path="./test_db.liteindex"
-        )
-```
-- [DefinedIndex Documentation](https://github.com/notAI-tech/LiteIndex/blob/main/DefinedIndex.md)
-
+- Query language is copy of mongodb queries. All queries are documented
+- strings, numbers, bools, blobs, flat lists and dicts, nested jsons and any other python objects can be stored and be queried upon at various levels
+- works across threads, processes seamlessly
+- 
 
 ## AnyIndex (***In development***)
 

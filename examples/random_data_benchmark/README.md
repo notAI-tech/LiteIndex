@@ -12,14 +12,14 @@
 
 | Index | Size (MB) |
 | --- | --- |
-| liteindex | 974 |
-| diskcache | 5632 |
-| sqlitedict | 5529 |
+| liteindex | 1862.2 |
+| diskcache | 1924.7 |
+| sqlitedict | 1940.4 |
 
 *** Table of insertion times per record, averaged (in milli seconds)***
 | Batch of: | 1 | 4 | 16 | 64 | 256 |
 | --- | --- | --- | --- | --- | --- |
-| liteindex | 0.523 | 0.434 | 0.405 | 0.389 | 0.395 |
+| liteindex | 0.522 | 0.466 | 0.445 | 0.439 | 0.520 |
 | diskcache | 0.74 | 0.61 | 0.646 | 0.619 | 0.611 |
 | sqlitedict | 1.1 | 1.06 | 1.04 | 0.996 | 0.942 |
 
