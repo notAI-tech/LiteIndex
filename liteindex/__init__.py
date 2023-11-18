@@ -1,2 +1,2 @@
-from .key_value_index import KVIndex
+from .dict_index import DictIndex
 from .defined_index import DefinedIndex

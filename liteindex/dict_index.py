@@ -10,7 +10,7 @@ except:
     zstandard = None
 
 
-class KVIndex:
+class DictIndex:
     def __init__(self, dir, compression_level=-1):
         self.dir = dir
         self.compression_level = compression_level
