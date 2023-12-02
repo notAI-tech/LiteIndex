@@ -64,8 +64,11 @@ class DefinedIndex:
         self.db_path = ":memory:" if db_path is None else db_path
         self.key_hash_to_original_key = {}
         self.original_key_to_key_hash = {}
+        self.key_hash_to_key_indice_number = {}
+        self.key_indice_number_to_key_hash = {}
+        self.lists_and_dicts_key_hashes = set()
+
         self.column_names = []
-        self.list_dict_keys_info = {}
         
         self.schema_property_to_column_type = {
             "boolean": "INTEGER",
@@ -95,7 +98,6 @@ class DefinedIndex:
             "other": "BLOB",
             
             "json": "JSON",
-            "compressed_json": "BLOB",
         }
 
         if not db_path == ":memory:":
@@ -217,6 +219,8 @@ class DefinedIndex:
             self.key_hash_to_original_key[key_hash] = key
             self.original_key_to_key_hash[key] = key_hash
             self.hashed_key_schema[key_hash] = value_type
+            self.key_hash_to_key_indice_number[key_hash] = _i
+            self.key_indice_number_to_key_hash[_i] = key_hash
 
     def _create_table_and_meta_table(self):
         columns = []
@@ -234,7 +238,9 @@ class DefinedIndex:
 
                 columns.append(f'"{key_hash}" {sql_column_type}')
                 self.column_names.append(key_hash)
-            
+            else:
+                self.lists_and_dicts_key_hashes.add(key_hash)
+
             meta_columns.append((key_hash, pickle.dumps(key, protocol=5), value_type))
 
         columns_str = ", ".join(columns)
@@ -282,12 +288,8 @@ class DefinedIndex:
         lists_and_dicts_table_data = {}
 
         for i, _id in enumerate(data.keys()):
-            for k in data[_id].keys():
-                if k in self.flatlist_column_hashes_to_index:
-            
-
             ordered_key_hashes = tuple(
-                key_hash for key, key_hash in self.original_key_to_key_hash.items() if key in data[_id]
+                key_hash for key, key_hash in self.original_key_to_key_hash.items() if key in data[_id] and key_hash not in self.lists_and_dicts_key_hashes
             )
 
             if ordered_key_hashes not in ids_grouped_by_common_key_hashes:
@@ -297,6 +299,7 @@ class DefinedIndex:
 
         with self._connection:
             updated_at = time.time()
+            lists_and_dicts_transactions = []
 
             for ordered_key_hashes, ids_group in ids_grouped_by_common_key_hashes.items():
                 transactions = []
@@ -314,39 +317,26 @@ class DefinedIndex:
                 for _id in ids_group:
                     data[_id] = defined_serializers.serialize_record(
                         self.original_key_to_key_hash,
+                        self.key_hash_to_key_indice_number,
                         self.schema,
                         data[_id],
                         self._compressor,
                     )
 
-                    data[_id]["id"] = _id
-                    data[_id]["updated_at"] = updated_at
-                    transactions.append([data[_id][key] for key in all_columns])
+                    data[_id][0]["id"] = _id
+                    data[_id][0]["updated_at"] = updated_at
+
+                    transactions.append([data[_id][0][key] for key in all_columns])
 
                 self._connection.executemany(sql, transactions)
             
-            transactions = []
-            all_columns = ("id", "column_index", "ind", "num", "text")
-            for (_id, column_index), _list in flatlist_data.items():
-                for ind, value in enumerate(_list):
-                    transactions.append((_id, column_index, ind, None, value) if isinstance(value, str) else (_id, column_index, ind, value, None))
-
             self._connection.executemany(
-                f"INSERT OR REPLACE INTO {self.list_table_name} ({', '.join(all_columns)}) VALUES (?, ?, ?, ?, ?)",
-                transactions,
+                f"INSERT INTO {self.lists_and_dicts_table_name} (id, column_index, list_index, dict_key, num, text, blob) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                lists_and_dicts_transactions,
             )
-
-            transactions = []
-            all_columns = ("id", "column_index", "key", "num", "text")
-            for (_id, column_index), _dict in flatdict_data.items():
-                for key, value in _dict.items():
-                    transactions.append((_id, column_index, key, None, value) if isinstance(value, str) else (_id, column_index, key, value, None))
             
-            self._connection.executemany(
-                f"INSERT OR REPLACE INTO {self.dict_table_name} ({', '.join(all_columns)}) VALUES (?, ?, ?, ?, ?)",
-                transactions,
-            )
 
+            
 
     def get(self, ids, select_keys=[], return_compressed=False):
         if isinstance(ids, str):

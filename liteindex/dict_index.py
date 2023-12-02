@@ -19,6 +19,8 @@ class DictIndex:
             zstandard = None
 
         self.local_storage = threading.local()
+        self.total_time_putting = 0
+        self.total_time_others = 0
 
     @property
     def __env(self):
@@ -53,7 +55,7 @@ class DictIndex:
         ):
             self.local_storage.compressor = (
                 zstandard.ZstdCompressor(level=self.compression_level)
-                if zstandard is not None
+                if self.compression_level is not None
                 else False
             )
         return self.local_storage.compressor
@@ -65,7 +67,7 @@ class DictIndex:
             or self.local_storage.decompressor is None
         ):
             self.local_storage.decompressor = (
-                zstandard.ZstdDecompressor() if zstandard is not None else False
+                zstandard.ZstdDecompressor() if self.compression_level is not None else False
             )
         return self.local_storage.decompressor
 
@@ -97,7 +99,7 @@ class DictIndex:
 
             return self.__deserialize_value(value_serialized)
 
-    def __setitem__(self, key, value, txn=None):
+    def __setitem__(self, key, value):
         value_hash, value_serialized = self.__get_hash_and_value(value)
         key_hash, key_serialized = self.__get_hash_and_value(key)
         updated_time_bytes = int(time.time() * 1e6).to_bytes(8, "big")
@@ -163,11 +165,24 @@ class DictIndex:
 
             return self.__deserialize_value(value_serialized)
 
-    def update(self, items):
+    def update(self, _data):
+        start = time.time()
+        write_data = []
+        for key, value in _data.items():
+            value_hash, value_serialized = self.__get_hash_and_value(value)
+            key_hash, key_serialized = self.__get_hash_and_value(key)
+            updated_time_bytes = int(time.time() * 1e6).to_bytes(8, "big")
+            write_data.append((key_hash, key_serialized, value_hash, value_serialized, updated_time_bytes))
+        self.total_time_others += (time.time() - start)
+        
+        start = time.time()
         with self.__env.begin(write=True) as txn:
-            for key, value in items:
-                self.__setitem__(key, value, txn)
-
+            for key_hash, key_serialized, value_hash, value_serialized, updated_time_bytes in write_data:
+                txn.put(key_hash, value_serialized, db=self.__key_hash_to_value_db)
+                txn.put(value_hash, key_hash, db=self.__value_hash_to_key_hash_db)
+                txn.put(key_hash, key_serialized, db=self.__key_hash_to_key_db)
+                txn.put(updated_time_bytes, key_hash, db=self.__updated_time_to_key_hash_db)
+        self.total_time_putting += (time.time() - start)
 
 if __name__ == "__main__":
     index = KVIndex("test")
