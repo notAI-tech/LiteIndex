@@ -48,7 +48,7 @@ class DefinedIndex:
         file_type=None,
         db_path=None,
         ram_cache_mb=64,
-        examples_for_compression = [],
+        examples_for_compression=[],
         compression_level=-1,
     ):
         if name.startswith("__"):
@@ -69,34 +69,27 @@ class DefinedIndex:
         self.lists_and_dicts_key_hashes = set()
 
         self.column_names = []
-        
+
         self.schema_property_to_column_type = {
             "boolean": "INTEGER",
             "boolean[]": None,
             "string:boolean": None,
-
             "string": "TEXT",
             "string[]": None,
             "string:string": None,
-
             "number": "NUMBER",
             "number[]": None,
             "string:number": None,
-            
             "datetime": "NUMBER",
             "datetime[]": None,
             "string:datetime": None,
-            
             "compressed_string": "BLOB",
             "compressed_string[]": None,
             "string:compressed_string": None,
-            
             "blob": "BLOB",
             "blob[]": None,
             "string:blob": None,
-            
             "other": "BLOB",
-            
             "json": "JSON",
         }
 
@@ -120,19 +113,28 @@ class DefinedIndex:
             for example in examples_for_compression:
                 example = self.serialize_record(example)
                 for k in example:
-                    if self.schema[self.key_hash_to_original_key[k]] in {"blob", "other", "text", "flatlist", "flatdict", "json"}:
+                    if self.schema[self.key_hash_to_original_key[k]] in {
+                        "blob",
+                        "other",
+                        "text",
+                        "flatlist",
+                        "flatdict",
+                        "json",
+                    }:
                         if k not in key_wise_data:
                             key_wise_data[k] = []
                         key_wise_data[k].append(example[k])
-            
+
             for k in key_wise_data:
-                zstd_dict = zstandard.train_dictionary(4*1024, key_wise_data[k], level=compression_level)
-        
+                zstd_dict = zstandard.train_dictionary(
+                    4 * 1024, key_wise_data[k], level=compression_level
+                )
+
         elif compression_level is None:
             self._compressor = False
             self._decompressor = False
             zstandard = None
-        
+
         self.compression_level = compression_level
         self._parse_schema()
         self._create_table_and_meta_table()
@@ -167,7 +169,9 @@ class DefinedIndex:
             or self.local_storage.compressor is None
         ):
             self.local_storage.compressor = (
-                zstandard.ZstdCompressor(level=self.compression_level) if zstandard is not None else False
+                zstandard.ZstdCompressor(level=self.compression_level)
+                if zstandard is not None
+                else False
             )
         return self.local_storage.compressor
 
@@ -284,12 +288,14 @@ class DefinedIndex:
 
     def update(self, data):
         ids_grouped_by_common_key_hashes = {}
-        
+
         lists_and_dicts_table_data = {}
 
         for i, _id in enumerate(data.keys()):
             ordered_key_hashes = tuple(
-                key_hash for key, key_hash in self.original_key_to_key_hash.items() if key in data[_id] and key_hash not in self.lists_and_dicts_key_hashes
+                key_hash
+                for key, key_hash in self.original_key_to_key_hash.items()
+                if key in data[_id] and key_hash not in self.lists_and_dicts_key_hashes
             )
 
             if ordered_key_hashes not in ids_grouped_by_common_key_hashes:
@@ -301,7 +307,10 @@ class DefinedIndex:
             updated_at = time.time()
             lists_and_dicts_transactions = []
 
-            for ordered_key_hashes, ids_group in ids_grouped_by_common_key_hashes.items():
+            for (
+                ordered_key_hashes,
+                ids_group,
+            ) in ids_grouped_by_common_key_hashes.items():
                 transactions = []
 
                 all_columns = ("id", "updated_at") + ordered_key_hashes
@@ -326,17 +335,23 @@ class DefinedIndex:
                     data[_id][0]["id"] = _id
                     data[_id][0]["updated_at"] = updated_at
 
+                    lists_and_dicts_transactions += (
+                        defined_serializers.lists_and_dicts_record_to_sqlite_records(
+                            _id,
+                            data[_id][1],
+                            self.key_indice_number_to_key_hash,
+                            self.hashed_key_schema,
+                        )[0]
+                    )
+
                     transactions.append([data[_id][0][key] for key in all_columns])
 
                 self._connection.executemany(sql, transactions)
-            
+
             self._connection.executemany(
                 f"INSERT INTO {self.lists_and_dicts_table_name} (id, column_index, list_index, dict_key, num, text, blob) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 lists_and_dicts_transactions,
             )
-            
-
-            
 
     def get(self, ids, select_keys=[], return_compressed=False):
         if isinstance(ids, str):
@@ -352,28 +367,23 @@ class DefinedIndex:
 
             select_keys = [self.original_key_to_key_hash[k] for k in select_keys]
 
-        table_wise_keys_to_select = {
-            self.name: [],
-            self.list_table_name: [],
-            self.dict_table_name: [],
-        }
+        self.lists_and_dicts_select_keys = [
+            k for k in select_keys if k in self.lists_and_dicts_key_hashes
+        ]
+        self.main_table_select_keys = [
+            k for k in select_keys if k not in self.lists_and_dicts_key_hashes
+        ]
 
-        for k in select_keys:
-            if k in self.flatlist_column_hashes_to_index:
-                table_wise_keys_to_select[self.list_table_name].append(k)
-            elif k in self.flatdict_column_hashes_to_index:
-                table_wise_keys_to_select[self.dict_table_name].append(k)
-            else:
-                table_wise_keys_to_select[self.name].append(k)
+        sql = f"""
+            SELECT id, {', '.join([f'{c} AS val' for c in self.main_table_select_keys])}, NULL as column_index, NULL as list_index, NULL as dict_key, NULL as num, NULL as text, NULL as blob 
+            FROM {self.name} WHERE id IN ({", ".join(['?' for _ in ids])})
+            UNION ALL
+            SELECT id, NULL as {", NULL as ".join(self.main_table_select_keys)}, column_index, list_index, dict_key, num, text, blob
+            FROM {self.lists_and_dicts_table_name} WHERE id IN ({", ".join(['?' for _ in ids])}) AND column_index IN ({",".join([str(self.key_hash_to_key_indice_number[k]) for k in self.lists_and_dicts_select_keys])})
+        """
+        params = ids + ids
 
-
-        # TODO: finish this
-
-        result = {}
-        for row in self._connection.execute(sql, ids).fetchall():
-            result[row[0]] = self.deserialize_record(
-                {h: val for h, val in zip(select_keys, row[1:])}, return_compressed
-            )
+        result = self._connection.execute(sql, params).fetchall()
 
         return result
 
@@ -679,7 +689,7 @@ class DefinedIndex:
 
     def delete_trigger(self, trigger_name):
         self._connection.execute(f"DROP TRIGGER {trigger_name};")
-    
+
     def vaccum(self):
         self._connection.execute("VACUUM")
         self._connection.commit()

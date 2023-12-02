@@ -88,14 +88,7 @@ def parse_query(query, schema, prefix=None):
     return where_conditions, params
 
 
-def pop_query(
-    table_name,
-    query,
-    schema,
-    sort_by=None,
-    reversed_sort=False,
-    n=None
-):
+def pop_query(table_name, query, schema, sort_by=None, reversed_sort=False, n=None):
     # Prepare the query
     where_conditions, params = parse_query(query, schema)
 
@@ -105,15 +98,15 @@ def pop_query(
         query_str += f" WHERE id IN (SELECT id FROM {table_name} WHERE {' AND '.join(where_conditions)}"
     else:
         query_str += f" WHERE id IN (SELECT id FROM {table_name}"
-    
+
     if sort_by:
         query_str += f" ORDER BY {sort_by} {'DESC' if reversed_sort else 'ASC'}"
 
     if n is not None:
         query_str += f" LIMIT {n}"
-    
+
     query_str += ")"
-    
+
     query_str += " RETURNING *"
 
     return query_str, params
