@@ -4,15 +4,23 @@
 
 | Type      | Description   |
 | ----------- | ----------- |
-| boolean    | use for storing boolean values       |
-| number   | use for storing any type of numbers. int, float ..        |
-| string   | use for storing any type of texts        |
-| datetime   | use for storing datetime.datetime objects        |
-| flatlist | use for storing list of strings or numbers |
-| flatdict | use for storing {} string keys and string or number values |
-| json   | use for storing any type of json dump-able objects. lists, dicts        |
-| blob   | use for storing files as bytes        |
-| other   | use for any other type of objects that are not in the ones above        |
+| boolean    | boolean values       |
+| boolean []   | list of boolean values        |
+| string:boolean   | dict of string keys and boolean values        |
+| number   | any type of numbers. int, float ..        |
+| number[]   | list of numbers        |
+| string:number   | dict of string keys and number values        |
+| string   | any type of texts        |
+| string[]   | list of strings        |
+| string:string   | dict of string keys and string values        |
+| datetime   | datetime.datetime objects        |
+| datetime[]   | list of datetime.datetime objects        |
+| string:datetime   | dict of string keys and datetime.datetime values        |
+| blob   | files as bytes        |
+| blob[]   | list of bytes        |
+| string:blob   | dict of string keys and bytes values        |
+| json   | any type of json dump-able objects        |
+| other   | any python objects are types. stored as pickled blobs internally        |
 
 
 - A schema has to be specified at first initialisation of the index and cannot be modified later on
@@ -20,9 +28,9 @@
 - keys of record /schema can be anything that can be keys in a python dict. eg: `schema_1 = {0: "string", "a": "number"}`
 - An in-memory index is created by default, i.e: no `db_path` is specified, and cannot be accessed from other processes and threads
 - If `db_path` is specified, disk-based index is initiated which is accessible from all processes, threads and is persistent
-- `json` type is a superset of `flatlist` and `flatdict` types. `flatlist` and `flatdict` are better query-able and faster`
-- on `blob` equality queries are supported and sorting, comparision are based on the size of the blob
-- `other` can be used to store any python objects, queries are not supported on this type
+- on `blob`, `blob[]`, `string:blob` equality queries are supported and sorting, comparision are based on the size of the blob
+- `other` can be used to store any python objects, equality queries are supported and sorting, comparision are based on the size of the pickled blob
+- `None` is allowed for all keys and is the default value for all keys
 
 ### Initialize
 ```python
@@ -33,13 +41,11 @@ schema = {
     "age": "number",
     "password": "string",
     "verified": "boolean",
-    "nicknames": "flatlist",
-    "address_details": "flatdict",
-    "profile_picture": "blob",
-    "tag_line": "string",
-    "tag_line_embedding": "other",
     "birthday": "datetime",
-    "metadata": "json",
+    "nicknames": "string[]",
+    "friend_ids": "string[]",
+    "address_details": "string:string",
+    "profile_picture": "blob",
 }
 
 index = DefinedIndex(
