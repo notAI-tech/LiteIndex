@@ -283,7 +283,11 @@ def serialize_record(
             )
 
         elif _type == "other":
-            v = pickle.dumps(v, protocol=5) if v is not None else None
+            v = (
+                pickle.dumps(v, protocol=pickle.HIGHEST_PROTOCOL)
+                if v is not None
+                else None
+            )
 
             _record[f"__size_{hashed_key}"] = len(v) if v is not None else None
             _record[f"__hash_{hashed_key}"] = hash_bytes(v) if v is not None else None

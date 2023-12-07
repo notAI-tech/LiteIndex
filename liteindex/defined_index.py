@@ -246,7 +246,13 @@ class DefinedIndex:
             else:
                 self.__lists_and_dicts_key_hashes.add(key_hash)
 
-            meta_columns.append((key_hash, pickle.dumps(key, protocol=5), value_type))
+            meta_columns.append(
+                (
+                    key_hash,
+                    pickle.dumps(key, protocol=pickle.HIGHEST_PROTOCOL),
+                    value_type,
+                )
+            )
 
         columns_str = ", ".join(columns)
 
