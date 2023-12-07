@@ -43,25 +43,22 @@ class DefinedIndex:
         self,
         name,
         schema=None,
-        example=None,
-        import_from_file=None,
-        file_type=None,
         db_path=None,
         ram_cache_mb=64,
-        examples_for_compression=[],
         compression_level=-1,
     ):
-        if name.startswith("__"):
+        self.name = name
+        self.schema = schema
+        self.db_path = ":memory:" if db_path is None else db_path
+        self.ram_cache_mb = ram_cache_mb
+        self.compression_level = compression_level
+
+        if self.name.startswith("__"):
             raise ValueError("Index name cannot start with '__'")
 
-        self.name = name
-        self.db_path = ":memory:" if db_path is None else db_path
+        self.__meta_table_name = f"__{self.name}_meta"
+        self.__lists_and_dicts_table_name = f"__{self.name}_lists_and_dicts"
 
-        self.__meta_table_name = f"__{name}_meta"
-        self.__lists_and_dicts_table_name = f"__{name}_lists_and_dicts"
-
-        self.ram_cache_mb = ram_cache_mb
-        self.schema = schema
         self.__hashed_key_schema = {}
         self.__key_hash_to_original_key = {}
         self.__original_key_to_key_hash = {}
@@ -71,30 +68,9 @@ class DefinedIndex:
 
         self.__column_names = []
 
-        self.__schema_property_to_column_type = {
-            "boolean": "INTEGER",
-            "boolean[]": None,
-            "string:boolean": None,
-            "string": "TEXT",
-            "string[]": None,
-            "string:string": None,
-            "number": "NUMBER",
-            "number[]": None,
-            "string:number": None,
-            "datetime": "NUMBER",
-            "datetime[]": None,
-            "string:datetime": None,
-            "compressed_string": "BLOB",
-            "compressed_string[]": None,
-            "string:compressed_string": None,
-            "blob": "BLOB",
-            "blob[]": None,
-            "string:blob": None,
-            "other": "BLOB",
-            "json": "JSON",
-        }
+        self.__local_storage = threading.local()
 
-        if not db_path == ":memory:":
+        if not self.db_path == ":memory:":
             db_dir = os.path.dirname(self.db_path).strip()
             if not db_dir:
                 db_dir = "./"
@@ -102,50 +78,25 @@ class DefinedIndex:
             if not os.path.exists(db_dir):
                 os.makedirs(db_dir, exist_ok=True)
 
-        self.__local_storage = threading.local()
-
-        self._validate_set_schema_if_exists()
+        self.__validate_set_schema_if_exists()
 
         if not self.schema:
             raise ValueError("Schema must be provided")
 
-        if examples_for_compression:
-            key_wise_data = {}
-            for example in examples_for_compression:
-                example = self.serialize_record(example)
-                for k in example:
-                    if self.schema[self.__key_hash_to_original_key[k]] in {
-                        "blob",
-                        "other",
-                        "text",
-                        "flatlist",
-                        "flatdict",
-                        "json",
-                    }:
-                        if k not in key_wise_data:
-                            key_wise_data[k] = []
-                        key_wise_data[k].append(example[k])
-
-            for k in key_wise_data:
-                zstd_dict = zstandard.train_dictionary(
-                    4 * 1024, key_wise_data[k], level=compression_level
-                )
-
-        elif compression_level is None:
-            self._compressor = False
-            self._decompressor = False
+        if self.compression_level is None:
+            self.__compressor = False
+            self.__decompressor = False
             zstandard = None
 
-        self.compression_level = compression_level
-        self._parse_schema()
-        self._create_table_and_meta_table()
+        self.__parse_schema()
+        self.__create_table_and_meta_table()
 
     def __del__(self):
-        if self._connection:
-            self._connection.close()
+        if self.__connection:
+            self.__connection.close()
 
     @property
-    def _connection(self):
+    def __connection(self):
         if (
             not hasattr(self.__local_storage, "db_conn")
             or self.__local_storage.db_conn is None
@@ -164,7 +115,7 @@ class DefinedIndex:
         return self.__local_storage.db_conn
 
     @property
-    def _compressor(self):
+    def __compressor(self):
         if (
             not hasattr(self.__local_storage, "compressor")
             or self.__local_storage.compressor is None
@@ -177,7 +128,7 @@ class DefinedIndex:
         return self.__local_storage.compressor
 
     @property
-    def _decompressor(self):
+    def __decompressor(self):
         if (
             not hasattr(self.__local_storage, "decompressor")
             or self.__local_storage.decompressor is None
@@ -187,9 +138,9 @@ class DefinedIndex:
             )
         return self.__local_storage.decompressor
 
-    def _validate_set_schema_if_exists(self):
+    def __validate_set_schema_if_exists(self):
         try:
-            rows = self._connection.execute(
+            rows = self.__connection.execute(
                 f"SELECT * FROM {self.__meta_table_name}"
             ).fetchall()
         except:
@@ -216,9 +167,9 @@ class DefinedIndex:
             if len(self.schema) != len(rows):
                 raise ValueError("existing schema does not match the provided schema")
 
-    def _parse_schema(self):
+    def __parse_schema(self):
         for _i, (key, value_type) in enumerate(self.schema.items()):
-            if value_type not in self.__schema_property_to_column_type:
+            if value_type not in defined_serializers.schema_property_to_column_type:
                 raise ValueError(f"Invalid schema property: {value_type}")
             key_hash = f"col_{_i}"
             self.__key_hash_to_original_key[key_hash] = key
@@ -227,13 +178,15 @@ class DefinedIndex:
             self.__key_hash_to_key_indice_number[key_hash] = _i
             self.__key_indice_number_to_key_hash[_i] = key_hash
 
-    def _create_table_and_meta_table(self):
+    def __create_table_and_meta_table(self):
         columns = []
         meta_columns = []
 
         for key, value_type in self.schema.items():
             key_hash = self.__original_key_to_key_hash[key]
-            sql_column_type = self.__schema_property_to_column_type[value_type]
+            sql_column_type = defined_serializers.schema_property_to_column_type[
+                value_type
+            ]
             if sql_column_type is not None:
                 if value_type in {"blob", "other"}:
                     columns.append(f'"__size_{key_hash}" NUMBER')
@@ -256,12 +209,12 @@ class DefinedIndex:
 
         columns_str = ", ".join(columns)
 
-        with self._connection:
-            self._connection.execute(
+        with self.__connection:
+            self.__connection.execute(
                 f"CREATE TABLE IF NOT EXISTS {self.name} (id TEXT PRIMARY KEY, updated_at NUMBER, {columns_str})"
             )
 
-            self._connection.execute(
+            self.__connection.execute(
                 f"""CREATE TABLE IF NOT EXISTS {self.__lists_and_dicts_table_name} (
                     id TEXT,
                     column_index INTEGER,
@@ -275,16 +228,16 @@ class DefinedIndex:
                 )"""
             )
 
-            self._connection.execute(
+            self.__connection.execute(
                 f"CREATE INDEX IF NOT EXISTS idx_{self.name}_updated_at ON {self.name} (updated_at)"
             )
 
-            self._connection.execute(
+            self.__connection.execute(
                 f"CREATE TABLE IF NOT EXISTS {self.__meta_table_name} "
                 "(hash TEXT PRIMARY KEY, pickled BLOB, value_type TEXT)"
             )
 
-            self._connection.executemany(
+            self.__connection.executemany(
                 f"INSERT OR IGNORE INTO {self.__meta_table_name} (hash, pickled, value_type) "
                 f"VALUES (?, ?, ?)",
                 [
@@ -311,7 +264,7 @@ class DefinedIndex:
 
             ids_grouped_by_common_key_hashes[ordered_key_hashes].append(_id)
 
-        with self._connection:
+        with self.__connection:
             updated_at = time.time()
             lists_and_dicts_transactions = []
 
@@ -337,7 +290,7 @@ class DefinedIndex:
                         self.__key_hash_to_key_indice_number,
                         self.schema,
                         data[_id],
-                        self._compressor,
+                        self.__compressor,
                     )
 
                     data[_id][0]["id"] = _id
@@ -354,9 +307,9 @@ class DefinedIndex:
 
                     transactions.append([data[_id][0][key] for key in all_columns])
 
-                self._connection.executemany(sql, transactions)
+                self.__connection.executemany(sql, transactions)
 
-            self._connection.executemany(
+            self.__connection.executemany(
                 f"INSERT INTO {self.__lists_and_dicts_table_name} (id, column_index, list_index, dict_key, num, text, blob) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 lists_and_dicts_transactions,
             )
@@ -392,7 +345,7 @@ class DefinedIndex:
         params = ids + ids
 
         results = {}
-        for result_item in self._connection.execute(sql, params).fetchall():
+        for result_item in self.__connection.execute(sql, params).fetchall():
             _id = result_item[0]
             if _id not in results:
                 results[_id] = {}
@@ -423,31 +376,30 @@ class DefinedIndex:
 
         results[_id] = defined_serializers.deserialize_record(
             self.__key_hash_to_original_key,
-            self.schema,
+            self.__hashed_key_schema,
             results[_id],
-            self._decompressor,
-            return_compressed,
+            self.__decompressor,
         )
 
         return results
 
     def clear(self):
         # CLEAR function: deletes the content of the table but keeps the table itself and the metadata table
-        with self._connection:
-            self._connection.execute(f"DROP TABLE IF EXISTS {self.name}")
-            self._connection.execute(
+        with self.__connection:
+            self.__connection.execute(f"DROP TABLE IF EXISTS {self.name}")
+            self.__connection.execute(
                 f"DROP TABLE IF EXISTS {self.__lists_and_dicts_table_name}"
             )
-            self._create_table_and_meta_table()
+            self.__create_table_and_meta_table()
 
     def drop(self):
         # DROP function: deletes both the table itself and the metadata table
-        with self._connection:
-            self._connection.execute(f"DROP TABLE IF EXISTS {self.name}")
-            self._connection.execute(
+        with self.__connection:
+            self.__connection.execute(f"DROP TABLE IF EXISTS {self.name}")
+            self.__connection.execute(
                 f"DROP TABLE IF EXISTS {self.__lists_and_dicts_table_name}"
             )
-            self._connection.execute(f"DROP TABLE IF EXISTS {self.__meta_table_name}")
+            self.__connection.execute(f"DROP TABLE IF EXISTS {self.__meta_table_name}")
 
     def search(
         self,
@@ -458,7 +410,6 @@ class DefinedIndex:
         page_no=None,
         select_keys=[],
         update=None,
-        return_compressed=False,
     ):
         if {k for k in query if k not in self.schema or self.schema[k] in {"other"}}:
             raise ValueError("Invalid query")
@@ -506,20 +457,22 @@ class DefinedIndex:
 
             sql_params = [_ for _ in update.values()] + sql_params
 
-            _results = self._connection.execute(sql_query, sql_params).fetchall()
+            _results = self.__connection.execute(sql_query, sql_params).fetchall()
 
-            self._connection.commit()
+            self.__connection.commit()
 
         else:
-            _results = self._connection.execute(sql_query, sql_params).fetchall()
+            _results = self.__connection.execute(sql_query, sql_params).fetchall()
 
         results = {}
 
         for result in _results:
             _id, updated_at = result[:2]
-            results[_id] = self.deserialize_record(
+            results[_id] = defined_serializers.deserialize_record(
+                self.__key_hash_to_original_key,
+                self.__hashed_key_schema,
                 {h: val for h, val in zip(select_keys_hashes, result[2:])},
-                return_compressed,
+                self.__decompressor,
             )
 
         return results
@@ -533,7 +486,7 @@ class DefinedIndex:
         )
 
         return {
-            _[0] for _ in self._connection.execute(sql_query, sql_params).fetchall()
+            _[0] for _ in self.__connection.execute(sql_query, sql_params).fetchall()
         }
 
     def group(self, keys, query):
@@ -549,20 +502,12 @@ class DefinedIndex:
 
         return {
             _[0]: _[1].split(chr(31))
-            for _ in self._connection.execute(sql_query, sql_params).fetchall()
+            for _ in self.__connection.execute(sql_query, sql_params).fetchall()
         }
 
-    def pop(
-        self,
-        ids=None,
-        query={},
-        n=1,
-        sort_by=None,
-        reversed_sort=False,
-        return_compressed=False,
-    ):
+    def pop(self, ids=None, query={}, n=1, sort_by=None, reversed_sort=False):
         if ids is not None:
-            with self._connection:
+            with self.__connection:
                 return {
                     row[0]: self.deserialize_record(
                         {
@@ -570,9 +515,8 @@ class DefinedIndex:
                             for h, val in zip(self.__column_names, row[2:])
                             if h in self.__key_hash_to_original_key
                         },
-                        return_compressed,
                     )
-                    for row in self._connection.execute(
+                    for row in self.__connection.execute(
                         f"DELETE FROM {self.name} WHERE id IN ({', '.join(['?' for _ in ids])}) RETURNING *",
                         ids,
                     ).fetchall()
@@ -588,7 +532,7 @@ class DefinedIndex:
                 n=n,
             )
 
-            with self._connection:
+            with self.__connection:
                 return {
                     row[0]: self.deserialize_record(
                         {
@@ -596,9 +540,8 @@ class DefinedIndex:
                             for h, val in zip(self.__column_names, row[2:])
                             if h in self.__key_hash_to_original_key
                         },
-                        return_compressed,
                     )
-                    for row in self._connection.execute(
+                    for row in self.__connection.execute(
                         sql_query, sql_params
                     ).fetchall()
                 }
@@ -614,16 +557,16 @@ class DefinedIndex:
                 schema=self.__hashed_key_schema,
             )
 
-            self._connection.execute(sql_query, sql_params)
-            self._connection.commit()
+            self.__connection.execute(sql_query, sql_params)
+            self.__connection.commit()
         elif ids:
             if isinstance(ids, str):
                 ids = [ids]
 
             placeholders = ", ".join(["?" for _ in ids])
             sql_query = f"DELETE FROM {self.name} WHERE id IN ({placeholders})"
-            self._connection.execute(sql_query, ids)
-            self._connection.commit()
+            self.__connection.execute(sql_query, ids)
+            self.__connection.commit()
         else:
             raise ValueError("Either ids or query must be provided")
 
@@ -634,21 +577,21 @@ class DefinedIndex:
             schema=self.__hashed_key_schema,
         )
 
-        return self._connection.execute(sql_query, sql_params).fetchone()[0]
+        return self.__connection.execute(sql_query, sql_params).fetchone()[0]
 
     def optimize_key_for_querying(self, key, is_unique=False):
         if self.schema[key] in {"string", "number", "boolean", "datetime"}:
             key_hash = self.__original_key_to_key_hash[key]
             if not is_unique:
-                self._connection.execute(
+                self.__connection.execute(
                     f"CREATE INDEX IF NOT EXISTS idx_{self.name}_{key_hash} ON {self.name} ({key_hash})"
                 )
             else:
-                self._connection.execute(
+                self.__connection.execute(
                     f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{self.name}_{key_hash} ON {self.name} ({key_hash})"
                 )
 
-            self._connection.commit()
+            self.__connection.commit()
         else:
             raise ValueError(
                 f"Cannot optimize for querying on {key}. Only string, number, boolean and datetime types are supported"
@@ -661,7 +604,7 @@ class DefinedIndex:
                 self.__key_hash_to_original_key.get(
                     _[1].replace(f"idx_{self.name}_", "")
                 ): {"is_unique": bool(_[2])}
-                for _ in self._connection.execute(
+                for _ in self.__connection.execute(
                     f"PRAGMA index_list({self.name})"
                 ).fetchall()
                 if _[1].startswith(f"idx_{self.name}_")
@@ -693,7 +636,7 @@ class DefinedIndex:
             schema=self.__hashed_key_schema,
         )
 
-        return self._connection.execute(sql_query, sql_params).fetchone()[0]
+        return self.__connection.execute(sql_query, sql_params).fetchone()[0]
 
     def trigger(
         self, function, operation="UPDATE", timing="AFTER", on_keys=None, each_row=False
@@ -724,22 +667,22 @@ class DefinedIndex:
         END;
         """
 
-        self._connection.execute(trigger_sql)
+        self.__connection.execute(trigger_sql)
 
     def list_triggers(self, table_name=None):
         if table_name:
-            result = self._connection.execute(
+            result = self.__connection.execute(
                 f"SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = '{table_name}';"
             )
         else:
-            result = self._connection.execute(
+            result = self.__connection.execute(
                 f"SELECT name FROM sqlite_master WHERE type = 'trigger';"
             )
         return result.fetchall()
 
     def delete_trigger(self, trigger_name):
-        self._connection.execute(f"DROP TRIGGER {trigger_name};")
+        self.__connection.execute(f"DROP TRIGGER {trigger_name};")
 
     def vaccum(self):
-        self._connection.execute("VACUUM")
-        self._connection.commit()
+        self.__connection.execute("VACUUM")
+        self.__connection.commit()

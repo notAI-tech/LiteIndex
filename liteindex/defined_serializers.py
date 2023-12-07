@@ -3,6 +3,29 @@ import pickle
 import sqlite3
 import hashlib
 
+schema_property_to_column_type = {
+    "boolean": "INTEGER",
+    "boolean[]": None,
+    "string:boolean": None,
+    "string": "TEXT",
+    "string[]": None,
+    "string:string": None,
+    "number": "NUMBER",
+    "number[]": None,
+    "string:number": None,
+    "datetime": "NUMBER",
+    "datetime[]": None,
+    "string:datetime": None,
+    "compressed_string": "BLOB",
+    "compressed_string[]": None,
+    "string:compressed_string": None,
+    "blob": "BLOB",
+    "blob[]": None,
+    "string:blob": None,
+    "other": "BLOB",
+    "json": "JSON",
+}
+
 
 def hash_bytes(data):
     hash_obj = hashlib.sha256(data)
@@ -305,36 +328,107 @@ def serialize_record(
 
 
 def deserialize_record(
-    key_hash_to_original_key, schema, record, decompressor, return_compressed=False
+    key_hash_to_original_key, schema, hashed_key_schema, record, decompressor
 ):
     _record = {}
     for k, v in record.items():
-        if v is None:
-            _record[key_hash_to_original_key[k]] = None
+        original_key = key_hash_to_original_key[k]
 
-        elif schema[key_hash_to_original_key[k]] == "other":
-            _record[key_hash_to_original_key[k]] = (
-                pickle.loads(
-                    decompressor.decompress(v)
-                    if (decompressor is not False or return_compressed)
-                    else v
-                )
-                if not return_compressed
-                else v
+        if hashed_key_schema[k] == "boolean":
+            _record[original_key] = bool(v) if v is not None else None
+
+        elif hashed_key_schema[k] == "boolean[]":
+            _record[original_key] = [bool(_v) for _v in v] if v is not None else None
+        elif hashed_key_schema[k] == "string:boolean":
+            _record[original_key] = (
+                {_k: bool(_v) for _k, _v in v.items()} if v is not None else None
             )
-        elif schema[key_hash_to_original_key[k]] == "datetime":
-            _record[key_hash_to_original_key[k]] = datetime.datetime.fromtimestamp(v)
-        elif schema[key_hash_to_original_key[k]] == "json":
-            _record[key_hash_to_original_key[k]] = json.loads(v)
-        elif schema[key_hash_to_original_key[k]] == "boolean":
-            _record[key_hash_to_original_key[k]] = bool(v)
-        elif schema[key_hash_to_original_key[k]] == "blob":
-            _record[key_hash_to_original_key[k]] = (
-                bytes(decompressor.decompress(v) if decompressor is not False else v)
-                if not return_compressed
-                else v
+
+        elif hashed_key_schema[k] == "string":
+            _record[original_key] = v if v is not None else None
+        elif hashed_key_schema[k] == "string[]":
+            _record[original_key] = v if v is not None else None
+        elif hashed_key_schema[k] == "string:string":
+            _record[original_key] = v if v is not None else None
+
+        elif hashed_key_schema[k] == "number":
+            _record[original_key] = v if v is not None else None
+        elif hashed_key_schema[k] == "number[]":
+            _record[original_key] = v if v is not None else None
+        elif hashed_key_schema[k] == "string:number":
+            _record[original_key] = v if v is not None else None
+
+        elif hashed_key_schema[k] == "datetime":
+            _record[original_key] = (
+                datetime.datetime.fromtimestamp(v) if v is not None else None
             )
-        else:
-            _record[key_hash_to_original_key[k]] = v
+        elif hashed_key_schema[k] == "datetime[]":
+            _record[original_key] = (
+                [datetime.datetime.fromtimestamp(_v) for _v in v]
+                if v is not None
+                else None
+            )
+        elif hashed_key_schema[k] == "string:datetime":
+            _record[original_key] = (
+                {_k: datetime.datetime.fromtimestamp(_v) for _k, _v in v.items()}
+                if v is not None
+                else None
+            )
+
+        elif hashed_key_schema[k] == "compressed_string":
+            _record[original_key] = (
+                decompressor.decompress(v).decode() if v is not None else None
+            )
+        elif hashed_key_schema[k] == "compressed_string[]":
+            _record[original_key] = (
+                [decompressor.decompress(_v).decode() for _v in v]
+                if v is not None
+                else None
+            )
+        elif hashed_key_schema[k] == "string:compressed_string":
+            _record[original_key] = (
+                {_k: decompressor.decompress(_v).decode() for _k, _v in v.items()}
+                if v is not None
+                else None
+            )
+
+        elif hashed_key_schema[k] == "blob":
+            _record[original_key] = (
+                decompressor.decompress(v)
+                if decompressor is not False
+                else v
+                if v is not None
+                else None
+            )
+        elif hashed_key_schema[k] == "blob[]":
+            _record[original_key] = (
+                [
+                    decompressor.decompress(_v) if decompressor is not False else _v
+                    for _v in v
+                ]
+                if v is not None
+                else None
+            )
+        elif hashed_key_schema[k] == "string:blob":
+            _record[original_key] = (
+                {
+                    _k: decompressor.decompress(_v) if decompressor is not False else _v
+                    for _k, _v in v.items()
+                }
+                if v is not None
+                else None
+            )
+
+        elif hashed_key_schema[k] == "other":
+            _record[original_key] = (
+                pickle.loads(decompressor.decompress(v))
+                if decompressor is not False
+                else pickle.loads(v)
+                if v is not None
+                else None
+            )
+
+        elif hashed_key_schema[k] == "json":
+            _record[original_key] = json.loads(v) if v is not None else None
 
     return _record
