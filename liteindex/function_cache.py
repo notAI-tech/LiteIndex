@@ -1,9 +1,25 @@
 import os
+import time
+import pickle
+import hashlib
 import tempfile
+from .defined_index import DefinedIndex
 
 
-def function_cache(cache_dir=tempfile.mkdtemp(), max_size_on_disk_mb=200):
-    env = lmdb.open(cache_dir, map_size=max_size_on_disk_mb * 1024 * 1024)
+def function_cache(
+    cache_dir=tempfile.mkdtemp(),
+    max_size_on_disk_mb=200,
+    max_ram_cache_mb=100,
+    compression_level=-1,
+    eviction_policy="LRU",
+):
+    index = DefinedIndex(
+        name="function_cache",
+        schema={"result": "other", "last_read_at": "number"},
+        db_path=os.path.join(cache_dir, "function_cache.db"),
+        ram_cache_mb=max_ram_cache_mb,
+        compression_level=compression_level,
+    )
 
     def decorator(func):
         def wrapper(*args, **kwargs):
@@ -12,37 +28,15 @@ def function_cache(cache_dir=tempfile.mkdtemp(), max_size_on_disk_mb=200):
             ).digest()
             result = None
             try:
-                with env.begin(write=False) as txn:
-                    result = txn.get(key)
-                    if result is not None:
-                        return pickle.loads(result)
+                result = index.get(key)["key"]["result"]
+                index.update(key, {"last_read_at": time.time()})
+
+            except:
                 result = func(*args, **kwargs)
-                with env.begin(write=True) as txn:
-                    txn.put(key, pickle.dumps(result, protocol=pickle.HIGHEST_PROTOCOL))
-
-            except lmdb.MapFullError:
-                with env.begin(write=True) as txn:
-                    cursor = txn.cursor()
-                    if cursor.first():
-                        count_to_delete = int(txn.stat()["entries"] / 10)
-                        for _ in range(count_to_delete):
-                            cursor.delete()
-
-                with env.begin(write=True) as txn:
-                    txn.put(key, pickle.dumps(result, protocol=pickle.HIGHEST_PROTOCOL))
+                index.update({key: {"result": result, "last_read_at": time.time()}})
 
             return result
 
         return wrapper
 
     return decorator
-
-
-if __name__ == "__main__":
-
-    @function_cache(map_size=100000)
-    def test_function(a, b):
-        return a + b
-
-    for i in range(1000):
-        test_function(i, i)
