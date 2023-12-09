@@ -9,6 +9,7 @@ pip install --upgrade liteindex
 - [Documentation](https://github.com/notAI-tech/LiteIndex/blob/main/DefinedIndex.md) | [Detailed example](https://github.com/notAI-tech/LiteIndex/blob/main/examples/defined_index_example.py) | [Benchmarks](https://github.com/notAI-tech/LiteIndex/tree/main/benchmarks/DefinedIndex)
 - fixed schema index i.e: schema has to be defined before hand
 - `number`, `boolean`, `datetime`, `string`, `compressed_string`, `blob`, `json` and `other` types are supported and can be queried upon
+- can store any python objects with varying levels of query-ability
 - Query language is copy of mongodb queries. All queries are documented
 - works across threads, processes seamlessly
 - compression is supported natively and optional custom compression dictionaries can be built
