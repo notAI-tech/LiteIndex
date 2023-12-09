@@ -5,20 +5,10 @@
 | Type      | Description   |
 | ----------- | ----------- |
 | boolean    | boolean values       |
-| boolean []   | list of boolean values        |
-| string:boolean   | dict of string keys and boolean values        |
 | number   | any type of numbers. int, float ..        |
-| number[]   | list of numbers        |
-| string:number   | dict of string keys and number values        |
 | string   | any type of texts        |
-| string[]   | list of strings        |
-| string:string   | dict of string keys and string values        |
 | datetime   | datetime.datetime objects        |
-| datetime[]   | list of datetime.datetime objects        |
-| string:datetime   | dict of string keys and datetime.datetime values        |
 | blob   | files as bytes        |
-| blob[]   | list of bytes        |
-| string:blob   | dict of string keys and bytes values        |
 | json   | any type of json dump-able objects        |
 | other   | any python objects are types. stored as pickled blobs internally        |
 
@@ -28,7 +18,7 @@
 - keys of record /schema can be anything that can be keys in a python dict. eg: `schema_1 = {0: "string", "a": "number"}`
 - An in-memory index is created by default, i.e: no `db_path` is specified, and cannot be accessed from other processes and threads
 - If `db_path` is specified, disk-based index is initiated which is accessible from all processes, threads and is persistent
-- on `blob`, `blob[]`, `string:blob` equality queries are supported and sorting, comparision are based on the size of the blob
+- on `blob` equality queries are supported and sorting, comparision are based on the size of the blob
 - `other` can be used to store any python objects, equality queries are supported and sorting, comparision are based on the size of the pickled blob
 - `None` is allowed for all keys and is the default value for all keys
 
@@ -42,10 +32,9 @@ schema = {
     "password": "string",
     "verified": "boolean",
     "birthday": "datetime",
-    "nicknames": "string[]",
-    "friend_ids": "string[]",
-    "address_details": "string:string",
     "profile_picture": "blob",
+    "nicknames": "json",
+    "user_embedding": "other",
 }
 
 index = DefinedIndex(
@@ -68,14 +57,10 @@ index.update(
             "age": 25,
             "password": "password",
             "verified": True,
+            "birthday": datetime.datetime(1995, 1, 1),
+            "profile_picture": b"......",
             "nicknames": ["John", "Doe"],
-            "address_details": {
-                "street": "123 Fake Street",
-                "city": "Springfield",
-                "state": "IL",
-                "zip": "12345"
-            },
-            "profile_picture": b"......"
+            "user_embedding": np.array([1, 2, 3])
         },
         "jane_doe": {
                 "name": "Jane Doe",
