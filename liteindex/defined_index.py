@@ -272,7 +272,7 @@ class DefinedIndex:
 
                 self.__connection.executemany(sql, transactions)
 
-    def get(self, ids, select_keys=[], return_compressed=False):
+    def get(self, ids, select_keys=[]):
         if isinstance(ids, str):
             ids = [ids]
 

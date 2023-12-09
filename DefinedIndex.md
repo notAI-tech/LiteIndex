@@ -23,6 +23,19 @@
 - `None` is allowed for all keys and is the default value for all keys
 
 ### Initialize
+- params
+
+| Param      | Description   | Default   |
+| ----------- | ----------- | ----------- |
+| name    | name of the index       | None        |
+| schema   | schema, will be loaded if index exists, otherwise has to be provided        | None        |
+| db_path   | path to the index file. If None, in-memory index is created        | None        |
+| ram_cache_mb   | size of the ram cache in MB        | 64        |
+| compression_level   | compression level for strings, blobs etc        | -1        |
+
+
+- example
+
 ```python
 from liteindex import DefinedIndex
 
@@ -35,6 +48,7 @@ schema = {
     "profile_picture": "blob",
     "nicknames": "json",
     "user_embedding": "other",
+    "user_bio": "compressed_string",
 }
 
 index = DefinedIndex(
@@ -60,7 +74,8 @@ index.update(
             "birthday": datetime.datetime(1995, 1, 1),
             "profile_picture": b"......",
             "nicknames": ["John", "Doe"],
-            "user_embedding": np.array([1, 2, 3])
+            "user_embedding": np.array([1, 2, 3]),
+            "user_bio": "This is a long string that will be compressed and stored"
         },
         "jane_doe": {
                 "name": "Jane Doe",
