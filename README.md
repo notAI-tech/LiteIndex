@@ -6,7 +6,7 @@ pip install --upgrade liteindex
 ```
 
 ### DefinedIndex
-- [Documentation](https://github.com/notAI-tech/LiteIndex/blob/main/DefinedIndex.md)
+- [Documentation](https://github.com/notAI-tech/LiteIndex/blob/main/DefinedIndex.md) | [Detailed example](https://github.com/notAI-tech/LiteIndex/blob/main/examples/defined_index_example.py) | [Benchmarks](https://github.com/notAI-tech/LiteIndex/tree/main/benchmarks/DefinedIndex)
 - fixed schema index i.e: schema has to be defined before hand
 - `number`, `boolean`, `datetime`, `string`, `compressed_string`, `blob`, `json` and `other` types are supported and can be queried upon
 - Query language is copy of mongodb queries. All queries are documented
@@ -14,7 +14,7 @@ pip install --upgrade liteindex
 - compression is supported natively and optional custom compression dictionaries can be built
 
 
-
 ### function_cache
-- [Documentation](https://github.com/notAI-tech/LiteIndex/blob/main/function_cache.md)
-- A decorator to cache function calls with arguments
+- [Documentation](https://github.com/notAI-tech/LiteIndex/blob/main/function_cache.md) | [Detailed example](https://github.com/notAI-tech/LiteIndex/blob/main/examples/function_cache_example.py) | [Benchmarks](https://github.com/notAI-tech/LiteIndex/tree/main/benchmarks/function_cache)
+- based on DefinedIndex, easy to use decorator for caching heavy function calls with arguments
+- works across threads, processes seamlessly
