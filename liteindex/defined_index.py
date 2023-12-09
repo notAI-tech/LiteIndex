@@ -623,3 +623,7 @@ class DefinedIndex:
     def vaccum(self):
         self.__connection.execute("VACUUM")
         self.__connection.commit()
+    
+    def export(self, format, ids, query=None, select_keys=None, file_path=None):
+        if format not in {"json", "jsonl", "csv", "df"}:
+            raise ValueError("Invalid format, can be one of json, jsonl, csv, df.")
