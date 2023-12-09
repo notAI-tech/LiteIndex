@@ -61,8 +61,6 @@ class DefinedIndex:
         self.__hashed_key_schema = {}
         self.__key_hash_to_original_key = {}
         self.__original_key_to_key_hash = {}
-        self.__key_hash_to_key_indice_number = {}
-        self.__key_indice_number_to_key_hash = {}
 
         self.__column_names = []
 
@@ -173,8 +171,6 @@ class DefinedIndex:
             self.__key_hash_to_original_key[key_hash] = key
             self.__original_key_to_key_hash[key] = key_hash
             self.__hashed_key_schema[key_hash] = value_type
-            self.__key_hash_to_key_indice_number[key_hash] = _i
-            self.__key_indice_number_to_key_hash[_i] = key_hash
 
     def __create_table_and_meta_table(self):
         columns = []
@@ -290,7 +286,24 @@ class DefinedIndex:
 
             select_keys = [self.__original_key_to_key_hash[k] for k in select_keys]
 
-        return None
+        # Prepare the SQL command
+        columns = ", ".join([f'"{h}"' for h in select_keys])
+        column_str = "id, " + columns  # Update this to include `id`
+
+        # Format the ids for the where clause
+        id_placeholders = ", ".join(["?" for _ in ids])
+        sql = f"SELECT {column_str} FROM {self.name} WHERE id IN ({id_placeholders})"
+
+        result = {}
+        for row in self.__connection.execute(sql, ids).fetchall():
+            result[row[0]] = defined_serializers.deserialize_record(
+                self.__key_hash_to_original_key,
+                self.__hashed_key_schema,
+                {h: val for h, val in zip(select_keys, row[1:])},
+                self.__decompressor,
+            )
+
+        return result
 
     def clear(self):
         # CLEAR function: deletes the content of the table but keeps the table itself and the metadata table
