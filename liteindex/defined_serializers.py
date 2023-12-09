@@ -328,71 +328,72 @@ def serialize_record(
 
 
 def deserialize_record(
-    key_hash_to_original_key, schema, hashed_key_schema, record, decompressor
+    key_hash_to_original_key, hashed_key_schema, record, decompressor
 ):
     _record = {}
     for k, v in record.items():
         original_key = key_hash_to_original_key[k]
+        key_type = hashed_key_schema[k]
 
-        if hashed_key_schema[k] == "boolean":
+        if key_type == "boolean":
             _record[original_key] = bool(v) if v is not None else None
 
-        elif hashed_key_schema[k] == "boolean[]":
+        elif key_type == "boolean[]":
             _record[original_key] = [bool(_v) for _v in v] if v is not None else None
-        elif hashed_key_schema[k] == "string:boolean":
+        elif key_type == "string:boolean":
             _record[original_key] = (
                 {_k: bool(_v) for _k, _v in v.items()} if v is not None else None
             )
 
-        elif hashed_key_schema[k] == "string":
+        elif key_type == "string":
             _record[original_key] = v if v is not None else None
-        elif hashed_key_schema[k] == "string[]":
+        elif key_type == "string[]":
             _record[original_key] = v if v is not None else None
-        elif hashed_key_schema[k] == "string:string":
-            _record[original_key] = v if v is not None else None
-
-        elif hashed_key_schema[k] == "number":
-            _record[original_key] = v if v is not None else None
-        elif hashed_key_schema[k] == "number[]":
-            _record[original_key] = v if v is not None else None
-        elif hashed_key_schema[k] == "string:number":
+        elif key_type == "string:string":
             _record[original_key] = v if v is not None else None
 
-        elif hashed_key_schema[k] == "datetime":
+        elif key_type == "number":
+            _record[original_key] = v if v is not None else None
+        elif key_type == "number[]":
+            _record[original_key] = v if v is not None else None
+        elif key_type == "string:number":
+            _record[original_key] = v if v is not None else None
+
+        elif key_type == "datetime":
             _record[original_key] = (
                 datetime.datetime.fromtimestamp(v) if v is not None else None
             )
-        elif hashed_key_schema[k] == "datetime[]":
+        elif key_type == "datetime[]":
             _record[original_key] = (
                 [datetime.datetime.fromtimestamp(_v) for _v in v]
                 if v is not None
                 else None
             )
-        elif hashed_key_schema[k] == "string:datetime":
+        elif key_type == "string:datetime":
             _record[original_key] = (
                 {_k: datetime.datetime.fromtimestamp(_v) for _k, _v in v.items()}
                 if v is not None
                 else None
             )
 
-        elif hashed_key_schema[k] == "compressed_string":
+        elif key_type == "compressed_string":
             _record[original_key] = (
                 decompressor.decompress(v).decode() if v is not None else None
             )
-        elif hashed_key_schema[k] == "compressed_string[]":
+        elif key_type == "compressed_string[]":
             _record[original_key] = (
                 [decompressor.decompress(_v).decode() for _v in v]
                 if v is not None
                 else None
             )
-        elif hashed_key_schema[k] == "string:compressed_string":
+        elif key_type == "string:compressed_string":
             _record[original_key] = (
                 {_k: decompressor.decompress(_v).decode() for _k, _v in v.items()}
                 if v is not None
                 else None
             )
 
-        elif hashed_key_schema[k] == "blob":
+        elif key_type == "blob":
             _record[original_key] = (
                 decompressor.decompress(v)
                 if decompressor is not False
@@ -400,7 +401,7 @@ def deserialize_record(
                 if v is not None
                 else None
             )
-        elif hashed_key_schema[k] == "blob[]":
+        elif key_type == "blob[]":
             _record[original_key] = (
                 [
                     decompressor.decompress(_v) if decompressor is not False else _v
@@ -409,7 +410,7 @@ def deserialize_record(
                 if v is not None
                 else None
             )
-        elif hashed_key_schema[k] == "string:blob":
+        elif key_type == "string:blob":
             _record[original_key] = (
                 {
                     _k: decompressor.decompress(_v) if decompressor is not False else _v
@@ -419,7 +420,7 @@ def deserialize_record(
                 else None
             )
 
-        elif hashed_key_schema[k] == "other":
+        elif key_type == "other":
             _record[original_key] = (
                 pickle.loads(decompressor.decompress(v))
                 if decompressor is not False
@@ -428,7 +429,7 @@ def deserialize_record(
                 else None
             )
 
-        elif hashed_key_schema[k] == "json":
+        elif key_type == "json":
             _record[original_key] = json.loads(v) if v is not None else None
 
     return _record

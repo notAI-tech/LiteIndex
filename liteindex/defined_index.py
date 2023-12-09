@@ -416,13 +416,11 @@ class DefinedIndex:
 
         if sort_by:
             if sort_by not in self.schema or self.schema[sort_by] in {
-                "other",
-                "string",
                 "json",
             }:
                 raise ValueError("Invalid sort_by")
 
-            elif self.schema[sort_by] == "blob":
+            elif self.schema[sort_by] in {"blob", "other"}:
                 sort_by = f"__size_{self.__original_key_to_key_hash[sort_by]}"
             else:
                 sort_by = self.__original_key_to_key_hash[sort_by]
