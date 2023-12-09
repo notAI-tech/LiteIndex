@@ -7,10 +7,11 @@
 | boolean    | boolean values       |
 | number   | any type of numbers. int, float ..        |
 | string   | any type of texts        |
+| compressed_string   | compressed text, queryable only for equality        |
 | datetime   | datetime.datetime objects        |
-| blob   | files as bytes        |
+| blob   | files as bytes, queryable for equality and sorted on size |
 | json   | any type of json dump-able objects        |
-| other   | any python objects are types. stored as pickled blobs internally        |
+| other   | any objects. stored as pickled blobs internally, queryable for equality and sorted on size|
 
 
 - A schema has to be specified at first initialisation of the index and cannot be modified later on
@@ -18,9 +19,7 @@
 - keys of record /schema can be anything that can be keys in a python dict. eg: `schema_1 = {0: "string", "a": "number"}`
 - An in-memory index is created by default, i.e: no `db_path` is specified, and cannot be accessed from other processes and threads
 - If `db_path` is specified, disk-based index is initiated which is accessible from all processes, threads and is persistent
-- on `blob` equality queries are supported and sorting, comparision are based on the size of the blob
-- `other` can be used to store any python objects, equality queries are supported and sorting, comparision are based on the size of the pickled blob
-- `None` is allowed for all keys and is the default value for all keys
+- `None` is allowed as a value for all keys and is the default value for all keys
 
 ### Initialize
 - params
