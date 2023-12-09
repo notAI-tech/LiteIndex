@@ -57,14 +57,12 @@ class DefinedIndex:
             raise ValueError("Index name cannot start with '__'")
 
         self.__meta_table_name = f"__{self.name}_meta"
-        self.__lists_and_dicts_table_name = f"__{self.name}_lists_and_dicts"
 
         self.__hashed_key_schema = {}
         self.__key_hash_to_original_key = {}
         self.__original_key_to_key_hash = {}
         self.__key_hash_to_key_indice_number = {}
         self.__key_indice_number_to_key_hash = {}
-        self.__lists_and_dicts_key_hashes = set()
 
         self.__column_names = []
 
@@ -187,17 +185,14 @@ class DefinedIndex:
             sql_column_type = defined_serializers.schema_property_to_column_type[
                 value_type
             ]
-            if sql_column_type is not None:
-                if value_type in {"blob", "other"}:
-                    columns.append(f'"__size_{key_hash}" NUMBER')
-                    self.__column_names.append(f"__size_{key_hash}")
-                    columns.append(f'"__hash_{key_hash}" TEXT')
-                    self.__column_names.append(f"__hash_{key_hash}")
+            if value_type in {"blob", "other"}:
+                columns.append(f'"__size_{key_hash}" NUMBER')
+                self.__column_names.append(f"__size_{key_hash}")
+                columns.append(f'"__hash_{key_hash}" TEXT')
+                self.__column_names.append(f"__hash_{key_hash}")
 
-                columns.append(f'"{key_hash}" {sql_column_type}')
-                self.__column_names.append(key_hash)
-            else:
-                self.__lists_and_dicts_key_hashes.add(key_hash)
+            columns.append(f'"{key_hash}" {sql_column_type}')
+            self.__column_names.append(key_hash)
 
             meta_columns.append(
                 (
@@ -212,20 +207,6 @@ class DefinedIndex:
         with self.__connection:
             self.__connection.execute(
                 f"CREATE TABLE IF NOT EXISTS {self.name} (id TEXT PRIMARY KEY, updated_at NUMBER, {columns_str})"
-            )
-
-            self.__connection.execute(
-                f"""CREATE TABLE IF NOT EXISTS {self.__lists_and_dicts_table_name} (
-                    id TEXT,
-                    column_index INTEGER,
-                    list_index INTEGER,
-                    dict_key TEXT,
-                    num NUMBER,
-                    text TEXT,
-                    blob BLOB,
-                    PRIMARY KEY (id, column_index, list_index, dict_key),
-                    FOREIGN KEY (id) REFERENCES {self.name}(id)
-                )"""
             )
 
             self.__connection.execute(
@@ -249,14 +230,11 @@ class DefinedIndex:
     def update(self, data):
         ids_grouped_by_common_key_hashes = {}
 
-        lists_and_dicts_table_data = {}
-
         for i, _id in enumerate(data.keys()):
             ordered_key_hashes = tuple(
                 key_hash
                 for key, key_hash in self.__original_key_to_key_hash.items()
                 if key in data[_id]
-                and key_hash not in self.__lists_and_dicts_key_hashes
             )
 
             if ordered_key_hashes not in ids_grouped_by_common_key_hashes:
@@ -266,7 +244,6 @@ class DefinedIndex:
 
         with self.__connection:
             updated_at = time.time()
-            lists_and_dicts_transactions = []
 
             for (
                 ordered_key_hashes,
@@ -287,32 +264,17 @@ class DefinedIndex:
                 for _id in ids_group:
                     data[_id] = defined_serializers.serialize_record(
                         self.__original_key_to_key_hash,
-                        self.__key_hash_to_key_indice_number,
                         self.schema,
                         data[_id],
                         self.__compressor,
                     )
 
-                    data[_id][0]["id"] = _id
-                    data[_id][0]["updated_at"] = updated_at
+                    data[_id]["id"] = _id
+                    data[_id]["updated_at"] = updated_at
 
-                    lists_and_dicts_transactions += (
-                        defined_serializers.lists_and_dicts_record_to_sqlite_records(
-                            _id,
-                            data[_id][1],
-                            self.__key_indice_number_to_key_hash,
-                            self.__hashed_key_schema,
-                        )[0]
-                    )
-
-                    transactions.append([data[_id][0][key] for key in all_columns])
+                    transactions.append([data[_id][key] for key in all_columns])
 
                 self.__connection.executemany(sql, transactions)
-
-            self.__connection.executemany(
-                f"INSERT INTO {self.__lists_and_dicts_table_name} (id, column_index, list_index, dict_key, num, text, blob) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                lists_and_dicts_transactions,
-            )
 
     def get(self, ids, select_keys=[], return_compressed=False):
         if isinstance(ids, str):
@@ -328,77 +290,18 @@ class DefinedIndex:
 
             select_keys = [self.__original_key_to_key_hash[k] for k in select_keys]
 
-        self.lists_and_dicts_select_keys = [
-            k for k in select_keys if k in self.__lists_and_dicts_key_hashes
-        ]
-        self.main_table_select_keys = [
-            k for k in select_keys if k not in self.__lists_and_dicts_key_hashes
-        ]
-
-        sql = f"""
-            SELECT id, {', '.join([f'{c} AS val' for c in self.main_table_select_keys])}, NULL as column_index, NULL as list_index, NULL as dict_key, NULL as num, NULL as text, NULL as blob 
-            FROM {self.name} WHERE id IN ({", ".join(['?' for _ in ids])})
-            UNION ALL
-            SELECT id, NULL as {", NULL as ".join(self.main_table_select_keys)}, column_index, list_index, dict_key, num, text, blob
-            FROM {self.__lists_and_dicts_table_name} WHERE id IN ({", ".join(['?' for _ in ids])}) AND column_index IN ({",".join([str(self.__key_hash_to_key_indice_number[k]) for k in self.lists_and_dicts_select_keys])})
-        """
-        params = ids + ids
-
-        results = {}
-        for result_item in self.__connection.execute(sql, params).fetchall():
-            _id = result_item[0]
-            if _id not in results:
-                results[_id] = {}
-            for i, key in enumerate(self.main_table_select_keys):
-                if result_item[i + 1] is not None:
-                    results[_id][key] = result_item[i + 1]
-
-            column_index = result_item[len(self.main_table_select_keys) + 1]
-            if column_index is not None:
-                dict_key = result_item[len(self.main_table_select_keys) + 3]
-                idx = result_item[len(self.main_table_select_keys) + 2]
-                key = self.__key_indice_number_to_key_hash[column_index]
-                val = (
-                    result_item[-3]
-                    if result_item[-3] is not None
-                    else result_item[-2]
-                    if result_item[-2] is not None
-                    else result_item[-1]
-                )
-                if dict_key:
-                    if key not in results[_id]:
-                        results[_id][key] = {}
-                    results[_id][key][dict_key] = val
-                else:
-                    if key not in results[_id]:
-                        results[_id][key] = []
-                    results[_id][key].append(val)
-
-        results[_id] = defined_serializers.deserialize_record(
-            self.__key_hash_to_original_key,
-            self.__hashed_key_schema,
-            results[_id],
-            self.__decompressor,
-        )
-
-        return results
+        return None
 
     def clear(self):
         # CLEAR function: deletes the content of the table but keeps the table itself and the metadata table
         with self.__connection:
             self.__connection.execute(f"DROP TABLE IF EXISTS {self.name}")
-            self.__connection.execute(
-                f"DROP TABLE IF EXISTS {self.__lists_and_dicts_table_name}"
-            )
             self.__create_table_and_meta_table()
 
     def drop(self):
         # DROP function: deletes both the table itself and the metadata table
         with self.__connection:
             self.__connection.execute(f"DROP TABLE IF EXISTS {self.name}")
-            self.__connection.execute(
-                f"DROP TABLE IF EXISTS {self.__lists_and_dicts_table_name}"
-            )
             self.__connection.execute(f"DROP TABLE IF EXISTS {self.__meta_table_name}")
 
     def search(
