@@ -273,34 +273,55 @@ class DefinedIndex:
 
                 self.__connection.executemany(sql, transactions)
 
-    def get(self, ids, select_keys=None, return_meta=False, meta_key="__meta__"):
+    def get(self, ids, select_keys=None, update=None):
         if isinstance(ids, str):
             ids = [ids]
 
         if not select_keys:
-            select_keys = list(self.__original_key_to_key_hash.values())
+            select_keys_hashes = list(self.__original_key_to_key_hash.values())
         else:
             if [k for k in select_keys if k not in self.__original_key_to_key_hash]:
                 raise ValueError(
                     f"Invalid select_keys: {[k for k in select_keys if k not in self.__original_key_to_key_hash]}"
                 )
 
-            select_keys = [self.__original_key_to_key_hash[k] for k in select_keys]
+            select_keys_hashes = [
+                self.__original_key_to_key_hash[k] for k in select_keys
+            ]
 
         # Prepare the SQL command
-        columns = ", ".join([f'"{h}"' for h in select_keys])
+        columns = ", ".join([f'"{h}"' for h in select_keys_hashes])
         column_str = "id, " + columns  # Update this to include `id`
 
         # Format the ids for the where clause
         id_placeholders = ", ".join(["?" for _ in ids])
-        sql = f"SELECT {column_str} FROM {self.name} WHERE id IN ({id_placeholders})"
+
+        if update:
+            update = defined_serializers.serialize_record(
+                self.__original_key_to_key_hash, self.schema, update, self.__compressor
+            )
+
+            update_columns = ", ".join([f'"{h}" = ?' for h in update.keys()])
+
+            sql_query = f"UPDATE {self.name} SET {update_columns} WHERE id IN ({id_placeholders}) RETURNING {', '.join(['id'] + select_keys_hashes)}"
+
+            sql_params = [_ for _ in update.values()] + ids
+
+            _result = self.__connection.execute(sql_query, sql_params).fetchall()
+            self.__connection.commit()
+
+        else:
+            sql_query = (
+                f"SELECT {column_str} FROM {self.name} WHERE id IN ({id_placeholders})"
+            )
+            _result = self.__connection.execute(sql_query, ids).fetchall()
 
         result = {}
-        for row in self.__connection.execute(sql, ids).fetchall():
+        for row in _result:
             result[row[0]] = defined_serializers.deserialize_record(
                 self.__key_hash_to_original_key,
                 self.__hashed_key_schema,
-                {h: val for h, val in zip(select_keys, row[1:])},
+                {h: val for h, val in zip(select_keys_hashes, row[1:])},
                 self.__decompressor,
             )
 
@@ -327,8 +348,6 @@ class DefinedIndex:
         page_no=None,
         select_keys=[],
         update=None,
-        return_meta=False,
-        meta_key="__meta__",
     ):
         if sort_by:
             if sort_by not in self.schema or self.schema[sort_by] in {
@@ -386,7 +405,9 @@ class DefinedIndex:
         _results = None
 
         if update:
-            update = self.serialize_record(update)
+            update = defined_serializers.serialize_record(
+                self.__original_key_to_key_hash, self.schema, update, self.__compressor
+            )
 
             update_columns = ", ".join([f'"{h}" = ?' for h in update.keys()])
 
@@ -446,12 +467,15 @@ class DefinedIndex:
         if ids is not None:
             with self.__connection:
                 return {
-                    row[0]: self.deserialize_record(
+                    row[0]: defined_serializers.deserialize_record(
+                        self.__key_hash_to_original_key,
+                        self.__hashed_key_schema,
                         {
                             h: val
                             for h, val in zip(self.__column_names, row[2:])
                             if h in self.__key_hash_to_original_key
                         },
+                        self.__decompressor,
                     )
                     for row in self.__connection.execute(
                         f"DELETE FROM {self.name} WHERE id IN ({', '.join(['?' for _ in ids])}) RETURNING *",
@@ -472,11 +496,14 @@ class DefinedIndex:
             with self.__connection:
                 return {
                     row[0]: self.deserialize_record(
+                        self.__key_hash_to_original_key,
+                        self.__hashed_key_schema,
                         {
                             h: val
                             for h, val in zip(self.__column_names, row[2:])
                             if h in self.__key_hash_to_original_key
                         },
+                        self.__decompressor,
                     )
                     for row in self.__connection.execute(
                         sql_query, sql_params
@@ -623,7 +650,7 @@ class DefinedIndex:
     def vaccum(self):
         self.__connection.execute("VACUUM")
         self.__connection.commit()
-    
+
     def export(self, format, ids, query=None, select_keys=None, file_path=None):
         if format not in {"json", "jsonl", "csv", "df"}:
             raise ValueError("Invalid format, can be one of json, jsonl, csv, df.")
