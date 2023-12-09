@@ -79,11 +79,6 @@ class DefinedIndex:
         if not self.schema:
             raise ValueError("Schema must be provided")
 
-        if self.compression_level is None:
-            self.__compressor = False
-            self.__decompressor = False
-            zstandard = None
-
         self.__parse_schema()
         self.__create_table_and_meta_table()
 
@@ -112,6 +107,9 @@ class DefinedIndex:
 
     @property
     def __compressor(self):
+        if self.compression_level is None:
+            return False
+
         if (
             not hasattr(self.__local_storage, "compressor")
             or self.__local_storage.compressor is None
@@ -125,6 +123,9 @@ class DefinedIndex:
 
     @property
     def __decompressor(self):
+        if self.compression_level is None:
+            return False
+
         if (
             not hasattr(self.__local_storage, "decompressor")
             or self.__local_storage.decompressor is None
@@ -352,11 +353,19 @@ class DefinedIndex:
             if self.schema[k] == "other":
                 _query[
                     f"__hash_{self.__original_key_to_key_hash[k]}"
-                ] = common_utils.hash(pickle.dumps(v, protocol=pickle.HIGHEST_PROTOCOL))
+                ] = defined_serializers.hash_bytes(
+                    pickle.dumps(v, protocol=pickle.HIGHEST_PROTOCOL)
+                )
             elif self.schema[k] == "blob":
                 _query[
                     f"__hash_{self.__original_key_to_key_hash[k]}"
-                ] = common_utils.hash(v)
+                ] = defined_serializers.hash_bytes(v)
+            elif self.schema[k] == "compressed_string":
+                _query[self.__original_key_to_key_hash[k]] = sqlite3.Binary(
+                    self.__compressor.compress(v.encode())
+                    if self.__compressor is not False
+                    else v.encode()
+                )
             else:
                 _query[self.__original_key_to_key_hash[k]] = v
 

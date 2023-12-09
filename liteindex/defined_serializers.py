@@ -2,6 +2,7 @@ import json
 import pickle
 import sqlite3
 import hashlib
+import datetime
 
 schema_property_to_column_type = {
     "boolean": "INTEGER",
@@ -47,6 +48,8 @@ def serialize_record(original_key_to_key_hash, schema, record, compressor):
         elif _type == "compressed_string":
             _record[hashed_key] = (
                 sqlite3.Binary(compressor.compress(v.encode()))
+                if compressor is not False
+                else v.encode()
                 if v is not None
                 else None
             )
@@ -109,7 +112,11 @@ def deserialize_record(
 
         elif key_type == "compressed_string":
             _record[original_key] = (
-                decompressor.decompress(v).decode() if v is not None else None
+                decompressor.decompress(v).decode()
+                if decompressor is not False
+                else v.decode()
+                if v is not None
+                else None
             )
 
         elif key_type == "blob":
