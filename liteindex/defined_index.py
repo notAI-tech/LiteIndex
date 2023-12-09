@@ -273,7 +273,7 @@ class DefinedIndex:
 
                 self.__connection.executemany(sql, transactions)
 
-    def get(self, ids, select_keys=[], return_meta=False, meta_key="__meta__"):
+    def get(self, ids, select_keys=None, return_meta=False, meta_key="__meta__"):
         if isinstance(ids, str):
             ids = [ids]
 
@@ -414,7 +414,7 @@ class DefinedIndex:
 
         return results
 
-    def distinct(self, key, query):
+    def distinct(self, key, query={}):
         sql_query, sql_params = distinct_query(
             table_name=self.name,
             column=self.__original_key_to_key_hash[key],
@@ -426,7 +426,7 @@ class DefinedIndex:
             _[0] for _ in self.__connection.execute(sql_query, sql_params).fetchall()
         }
 
-    def group(self, keys, query):
+    def group(self, keys, query={}):
         if isinstance(keys, str):
             keys = [keys]
 
@@ -487,7 +487,7 @@ class DefinedIndex:
             raise ValueError("Either ids or query must be provided")
 
     def delete(self, ids=None, query=None):
-        if query:
+        if query is not None:
             sql_query, sql_params = delete_query(
                 table_name=self.name,
                 query={self.__original_key_to_key_hash[k]: v for k, v in query.items()},
