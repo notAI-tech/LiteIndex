@@ -272,7 +272,7 @@ class DefinedIndex:
 
                 self.__connection.executemany(sql, transactions)
 
-    def get(self, ids, select_keys=[]):
+    def get(self, ids, select_keys=[], return_meta=False, meta_key="__meta__"):
         if isinstance(ids, str):
             ids = [ids]
 
@@ -326,10 +326,9 @@ class DefinedIndex:
         page_no=None,
         select_keys=[],
         update=None,
+        return_meta=False,
+        meta_key="__meta__",
     ):
-        if {k for k in query if k not in self.schema or self.schema[k] in {"other"}}:
-            raise ValueError("Invalid query")
-
         if sort_by:
             if sort_by not in self.schema or self.schema[sort_by] in {
                 "json",
@@ -346,9 +345,24 @@ class DefinedIndex:
 
         select_keys_hashes = [self.__original_key_to_key_hash[k] for k in select_keys]
 
+        _query = {}
+        for k, v in query.items():
+            if k not in self.schema:
+                raise ValueError(f"Invalid query: {k} is not a valid key")
+            if self.schema[k] == "other":
+                _query[
+                    f"__hash_{self.__original_key_to_key_hash[k]}"
+                ] = common_utils.hash(pickle.dumps(v, protocol=pickle.HIGHEST_PROTOCOL))
+            elif self.schema[k] == "blob":
+                _query[
+                    f"__hash_{self.__original_key_to_key_hash[k]}"
+                ] = common_utils.hash(v)
+            else:
+                _query[self.__original_key_to_key_hash[k]] = v
+
         sql_query, sql_params = search_query(
             table_name=self.name,
-            query={self.__original_key_to_key_hash[k]: v for k, v in query.items()},
+            query=_query,
             schema=self.__hashed_key_schema,
             sort_by=sort_by if sort_by is not None else "updated_at",
             reversed_sort=reversed_sort,
