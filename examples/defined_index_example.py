@@ -1,3 +1,5 @@
+import sys
+sys.path.append("..")
 from faker import Faker
 from liteindex import DefinedIndex
 from datetime import datetime
@@ -31,7 +33,7 @@ index = DefinedIndex(
         )
 
 # Prepare data for N users
-N = 1000
+N = 100
 users = {
     fake.unique.user_name(): {
         "name": fake.name(),
@@ -81,7 +83,15 @@ end = timeit.default_timer()
 print(f'Search time for user embedding: {end - start} seconds')
 
 # Test get performance
+random_user = random.choice(user_id_list)
+
 start = timeit.default_timer()
-index.get(random.choice(user_id_list))
+print(random_user, index.get(random_user, select_keys=["name", "age"]))
 end = timeit.default_timer()
 print(f'Get time: {end - start} seconds')
+
+# get and update
+start = timeit.default_timer()
+print(random_user, index.get(random_user, update={"age": 6788}, select_keys=["name", "age"]))
+end = timeit.default_timer()
+print(f'Get and update time: {end - start} seconds')

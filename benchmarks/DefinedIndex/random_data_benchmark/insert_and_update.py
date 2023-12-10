@@ -1,3 +1,6 @@
+import sys
+sys.path.append("../../../")
+
 import os
 import uuid
 import time
