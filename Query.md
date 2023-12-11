@@ -6,14 +6,11 @@ schema = {
     "age": "number",
     "password": "string",
     "verified": "boolean",
-    "nicknames": "flatlist",
-    "address_details": "flatdict",
-    "profile_picture": "blob",
-    "tag_line": "string",
-    "tag_line_embedding": "other",
     "birthday": "datetime",
-    "metadata": "json",
-    "mark_list": "flatlist"
+    "address": "json",
+    "profile_picture": "blob",
+    "description": "compressed_string",
+    "tag_line_embedding": "other"
 }
 
 
@@ -35,31 +32,6 @@ schema = {
 | {"age": {"$ne": 25}}                               | age != 25                                            |
 | {"age": {"$gt": 20, "$lt": 30}}                    | (age > 20) and (age < 30)                            |
 | {"$or": [{"age": {"$gte": 20, "$lte": 30}}, {"name": "john"}]} | ((age >= 20) and (age <= 30)) or (name == "john")    |
-
-
-<!-- - Example of queries on text (regex is supported)
-| Query                                | Explanation                                                                                                |
-|--------------------------------------------------|------------------------------------------------------------------------------------------------------------|
-| {"name": {"$regex": "doe", "$options": "i"}}     | name contains "doe" (case insensitive)                                                                      | -->
-
-
-
-#### Example of queries on flatlist and flatdict
-
-
-| Query                                | Explanation                                                                                                |
-|--------------------------------------------------|------------------------------------------------------------------------------------------------------------|
-| {"nicknames": "John"}                             | "John" in nicknames                                                                                       |
-| {"nicknames": ["John", "Doe"]}                    | nicknames == ["John", "Doe"]|
-| {"nicknames": {"$in": ["John", "Doe"]}}           | "John" in nicknames or "Doe" in nicknames                                                                 |
-| {"nicknames": {"$all": ["John", "Doe"]}}          | "John" in nicknames and "Doe" in nicknames                                                                |
-| {"nicknames": {"$size": 2}}                       | len(nicknames) == 2                                                                                       |
-| {"nicknames.0": "John"}                          | nicknames[0] == "John"        |
-| {"nicknames": {"$ne": "John"}}                   | "John" not in nicknames       |
-
-
-| {"address_details": {"city": "Springfield"}}     | address_details.city == "Springfield"                                                                      |
-| {"address_details": {"city": {"$in": ["Springfield", "Chicago"]}}} | address_details.city == "Springfield" or address_details.city == "Chicago" |
 
 
 #### Example of queries on blob or other
