@@ -3,7 +3,7 @@ import sys
 sys.path.append("../../")
 
 
-from liteindex import function_cache
+from liteindex import function_cache, EvictLRU, EvictAny
 from diskcache import Cache
 
 # from sentence_transformers import SentenceTransformer
@@ -15,7 +15,7 @@ vec = np.random.rand(256)
 
 # model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
 
-@function_cache(dir="./embeddings_cache")
+@function_cache(dir="./embeddings_cache", eviction_policy=EvictAny)
 def get_embeddings(sentence):
     return vec
 

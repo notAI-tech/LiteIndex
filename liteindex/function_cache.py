@@ -4,28 +4,25 @@ import lmdb
 import pickle
 import hashlib
 import tempfile
-from .common_utils import set_ulimit
+from .common_utils import set_ulimit, EvictAny, EvictLRU, EvictLFU
 
 set_ulimit()
 
-EvictAny = "any"
-EvictLRU = "lru"
-EvictLFU = "lfu"
+
 
 
 def function_cache(
     dir=tempfile.mkdtemp(),
     max_size_mb=1000,
     eviction_policy=EvictAny,
-    fast_mode=True,
     invalidate_older_than_seconds=None,
 ):
     env = lmdb.open(
         path=dir,
         subdir=True,
         map_size=max_size_mb * 1024**2,
-        metasync=not fast_mode,
-        sync=not fast_mode,
+        metasync=False,
+        sync=False,
         create=True,
         writemap=False,
         max_readers=2048,
