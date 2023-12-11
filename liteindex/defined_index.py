@@ -543,23 +543,26 @@ class DefinedIndex:
 
         return self.__connection.execute(sql_query, sql_params).fetchone()[0]
 
-    def optimize_key_for_querying(self, key, is_unique=False):
-        if self.schema[key] in {"string", "number", "boolean", "datetime"}:
-            key_hash = self.__original_key_to_key_hash[key]
-            if not is_unique:
-                self.__connection.execute(
-                    f"CREATE INDEX IF NOT EXISTS idx_{self.name}_{key_hash} ON {self.name} ({key_hash})"
-                )
-            else:
-                self.__connection.execute(
-                    f"CREATE UNIQUE INDEX IF NOT EXISTS idx_{self.name}_{key_hash} ON {self.name} ({key_hash})"
-                )
+    def optimize_for_query(self, key, is_unique=False):
+        if self.schema[key] == "json":
+            raise ValueError("Cannot optimize json columns")
+            
+        key_hash = self.__original_key_to_key_hash[key]
 
-            self.__connection.commit()
-        else:
-            raise ValueError(
-                f"Cannot optimize for querying on {key}. Only string, number, boolean and datetime types are supported"
+        if self.schema[key] in {"blob", "other"}:
+            self.__connection.execute(
+                f"CREATE {'UNIQUE' if is_unique else ''} INDEX IF NOT EXISTS idx_{self.name}_hash_{key_hash} ON {self.name} (__hash_{key_hash})"
             )
+
+            self.__connection.execute(
+                f"CREATE {'UNIQUE' if is_unique else ''} INDEX IF NOT EXISTS idx_{self.name}_size_{key_hash} ON {self.name} (__size_{key_hash})"
+            )
+        else:
+            self.__connection.execute(
+                f"CREATE {'UNIQUE' if is_unique else ''} INDEX IF NOT EXISTS idx_{self.name}_{key_hash} ON {self.name} ({key_hash})"
+            )
+
+        self.__connection.commit()
 
     def list_optimized_keys(self):
         return {

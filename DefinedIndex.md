@@ -223,12 +223,23 @@ index.group()
 ### math
 
 ### Optimize for Search
+- Optimizes the index for search on a key
+*** params ***
+- `key`: key from schema to optimize for search, `no default`
+- `is_unique`: `defaults to False`, if True, will not allow duplicate values for the key
+
 ```python
-index.optimize_for_query()
+index.optimize_for_query(key="name", is_unique=True)
 ```
 
 ### list optimized keys
 
+*** params ***
+- `return`: {key: {"is_unique": bool}}
+
+```python
+list_optimized_keys()
+```
 
 ### Trigger
 
