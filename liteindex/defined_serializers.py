@@ -47,7 +47,11 @@ def serialize_record(original_key_to_key_hash, schema, record, compressor):
 
         elif _type == "compressed_string":
             _record[hashed_key] = (
-                None if v is None else compressor.compress(v.encode()) if compressor is not False else v.encode()
+                None
+                if v is None
+                else compressor.compress(v.encode())
+                if compressor is not False
+                else v.encode()
             )
 
         # blob
@@ -57,19 +61,25 @@ def serialize_record(original_key_to_key_hash, schema, record, compressor):
             _record[f"__hash_{hashed_key}"] = None if v is None else hash_bytes(v)
 
             _record[hashed_key] = (
-                None if v is None else compressor.compress(v) if compressor is not False else v
+                None
+                if v is None
+                else compressor.compress(v)
+                if compressor is not False
+                else v
             )
 
         elif _type == "other":
-            v = (
-                None if v is None else pickle.dumps(v, protocol=pickle.HIGHEST_PROTOCOL)
-            )
+            v = None if v is None else pickle.dumps(v, protocol=pickle.HIGHEST_PROTOCOL)
 
             _record[f"__size_{hashed_key}"] = None if v is None else len(v)
             _record[f"__hash_{hashed_key}"] = None if v is None else hash_bytes(v)
 
             _record[hashed_key] = (
-                None if v is None else compressor.compress(v) if compressor is not False else v
+                None
+                if v is None
+                else compressor.compress(v)
+                if compressor is not False
+                else v
             )
 
         elif _type == "json":
@@ -102,17 +112,29 @@ def deserialize_record(
 
         elif key_type == "compressed_string":
             _record[original_key] = (
-                None if v is None else decompressor.decompress(v).decode() if decompressor is not False else v.decode()
+                None
+                if v is None
+                else decompressor.decompress(v).decode()
+                if decompressor is not False
+                else v.decode()
             )
 
         elif key_type == "blob":
             _record[original_key] = (
-                None if v is None else decompressor.decompress(v) if decompressor is not False else v
+                None
+                if v is None
+                else decompressor.decompress(v)
+                if decompressor is not False
+                else v
             )
 
         elif key_type == "other":
             _record[original_key] = (
-                None if v is None else pickle.loads(decompressor.decompress(v)) if decompressor is not False else pickle.loads(v)
+                None
+                if v is None
+                else pickle.loads(decompressor.decompress(v))
+                if decompressor is not False
+                else pickle.loads(v)
             )
 
         elif key_type == "json":

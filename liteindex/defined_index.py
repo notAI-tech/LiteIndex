@@ -543,26 +543,34 @@ class DefinedIndex:
 
         return self.__connection.execute(sql_query, sql_params).fetchone()[0]
 
-    def optimize_for_query(self, key, is_unique=False):
-        if self.schema[key] == "json":
-            raise ValueError("Cannot optimize json columns")
-            
-        key_hash = self.__original_key_to_key_hash[key]
+    def optimize_for_query(self, keys, is_unique=False):
+        if isinstance(keys, str):
+            keys = [keys]
 
-        if self.schema[key] in {"blob", "other"}:
+        key_hashes = []
+        size_hashes = []
+
+        for k in keys:
+            key_hash = self.__original_key_to_key_hash[k]
+            if self.schema[k] in {"blob", "other"}:
+                key_hashes.append(f"__hash_{key_hash}")
+                size_hashes.append(f"__size_{key_hash}")
+            elif self.schema[k] == "json":
+                pass
+            else:
+                key_hashes.append(key_hash)
+
+        if key_hashes:
             self.__connection.execute(
-                f"CREATE {'UNIQUE' if is_unique else ''} INDEX IF NOT EXISTS idx_{self.name}_hash_{key_hash} ON {self.name} (__hash_{key_hash})"
+                f"CREATE {'UNIQUE' if is_unique else ''} INDEX IF NOT EXISTS idx_{self.name}_{'_'.join(key_hashes)} ON {self.name} ({','.join(key_hashes)})"
             )
 
-            self.__connection.execute(
-                f"CREATE {'UNIQUE' if is_unique else ''} INDEX IF NOT EXISTS idx_{self.name}_size_{key_hash} ON {self.name} (__size_{key_hash})"
-            )
-        else:
-            self.__connection.execute(
-                f"CREATE {'UNIQUE' if is_unique else ''} INDEX IF NOT EXISTS idx_{self.name}_{key_hash} ON {self.name} ({key_hash})"
-            )
+            for size_hash in size_hashes:
+                self.__connection.execute(
+                    f"CREATE INDEX IF NOT EXISTS idx_{self.name}_{size_hash} ON {self.name} ({size_hash})"
+                )
 
-        self.__connection.commit()
+            self.__connection.commit()
 
     def list_optimized_keys(self):
         return {
