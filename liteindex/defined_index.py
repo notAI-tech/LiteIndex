@@ -8,7 +8,17 @@ import os
 import time
 import json
 import pickle
-import sqlite3
+
+try:
+    import sqlean as sqlite3
+except:
+    import sqlite3
+
+if sqlite3.sqlite_version < "3.35.0":
+    raise ValueError(
+        "SQLite version must be at least 3.35.0. Please install `pip install sqlean.py`"
+    )
+
 import datetime
 
 try:
