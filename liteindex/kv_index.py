@@ -18,6 +18,7 @@ class KVIndex:
         self,
         db_path=None,
         store_key=True,
+        preserve_order=True,
         eviction_policy=EvictNone,
         ram_cache_mb=32
     ):
@@ -26,6 +27,7 @@ class KVIndex:
         self.db_path = db_path if db_path is not None else ":memory:"
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True) if db_path is not None else None
         self.ram_cache_mb = ram_cache_mb
+        self.preserve_order = preserve_order
 
         self.__local_storage = threading.local()
 
@@ -36,6 +38,9 @@ class KVIndex:
 
         if self.store_key:
             columns_needed_and_sql_types["pickled_key"] = "BLOB"
+        if self.preserve_order:
+            columns_needed_and_sql_types["updated_at"] = "INTEGER"
+
         if self.eviction_policy is EvictLRU:
             columns_needed_and_sql_types["last_accessed_time"] = "INTEGER"
         elif self.eviction_policy is EvictLFU:
@@ -81,6 +86,9 @@ class KVIndex:
         }
         if self.store_key:
             data_to_insert["pickled_key"] = sqlite3.Binary(key)
+        if self.preserve_order:
+            data_to_insert["updated_at"] = int(time.time() * 1000)
+
         if self.eviction_policy == EvictLRU:
             data_to_insert["last_accessed_time"] = int(time.time() * 1000)
         elif self.eviction_policy == EvictLFU:
@@ -105,14 +113,34 @@ class KVIndex:
     def __getitem__(self, key):
         key = pickle.dumps(key, protocol=pickle.HIGHEST_PROTOCOL)
         key_hash = hashlib.sha256(key).digest()
-
         with self.__connection as conn:
             row = conn.execute(
                 "SELECT pickled_value FROM kv_index WHERE key_hash = ?", (sqlite3.Binary(key_hash),)
             ).fetchone()
             if row is None:
-                raise KeyError(key)
+                raise KeyError
+            
             return pickle.loads(row[0])
+    
+    def get(self, key, default=None, return_metadata=False):
+        key = pickle.dumps(key, protocol=pickle.HIGHEST_PROTOCOL)
+        key_hash = hashlib.sha256(key).digest()
+
+        if return_metadata:
+            pass
+        else:
+            row = self.__connection.execute(
+                "SELECT pickled_value FROM kv_index WHERE key_hash = ?", (sqlite3.Binary(key_hash),)
+            ).fetchone()
+            if row is None:
+                return default
+            return pickle.loads(row[0])
+    
+    def items(self, reverse=False):
+        sql = f"SELECT {'pickled_key' if self.store_key else 'key_hash'}, pickled_value FROM kv_index {'ORDER BY updated_at' if self.preserve_order else ''} {'DESC' if reverse else ''}"
+        with self.__connection as conn:
+            for row in conn.execute(sql):
+                yield pickle.loads(row[0]), pickle.loads(row[1])
 
 
 
@@ -122,7 +150,12 @@ if __name__ == "__main__":
     start = time.time()
     for i in range(10000):
         kv_index[i] = i
-    print(time.time() - start)
+    print("KV set", time.time() - start)
+
+    start = time.time()
+    for k, v in kv_index.items():
+        pass
+    print("KV get", time.time() - start)
 
     from diskcache import Index
     index = Index("dkv")
@@ -130,6 +163,11 @@ if __name__ == "__main__":
     start = time.time()
     for i in range(10000):
         index[i] = i
-    print(time.time() - start)
+    print("DKV set", time.time() - start)
+
+    start = time.time()
+    for k, v in index.items():
+        pass
+    print("DKV get", time.time() - start)
 
     
