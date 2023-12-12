@@ -499,7 +499,7 @@ class DefinedIndex:
 
             with self.__connection:
                 return {
-                    row[0]: self.deserialize_record(
+                    row[0]: defined_serializers.deserialize_record(
                         self.__key_hash_to_original_key,
                         self.__hashed_key_schema,
                         {
