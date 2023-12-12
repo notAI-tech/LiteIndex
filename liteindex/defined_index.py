@@ -103,6 +103,10 @@ class DefinedIndex:
                 f"PRAGMA cache_size=-{self.ram_cache_mb * 1024}"
             )
 
+            self.__local_storage.db_conn.execute(
+                f"PRAGMA BUSY_TIMEOUT=60000"
+            )
+
         return self.__local_storage.db_conn
 
     @property

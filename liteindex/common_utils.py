@@ -13,9 +13,3 @@ def set_ulimit():
             break
         except:
             limit = limit // 2
-
-
-# Eviction policy names
-EvictAny = "any"
-EvictLRU = "lru"
-EvictLFU = "lfu"

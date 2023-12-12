@@ -1,197 +1,135 @@
+from .common_utils import set_ulimit
+set_ulimit()
+
 import os
 import time
-import lmdb
 import pickle
 import hashlib
-import tempfile
+import sqlite3
+import threading
 
+EvictAny = "any"
+EvictLRU = "lru"
+EvictLFU = "lfu"
+EvictNone = None
 
 class KVIndex:
-    EvictNone = "none"
-    EvictAny = "any"
-
     def __init__(
         self,
-        dir=tempfile.mkdtemp(),
-        fast_mode=False,
+        db_path=None,
         store_key=True,
         eviction_policy=EvictNone,
-        max_size_mb=0,
-        max_no_of_elements=0,
+        ram_cache_mb=32
     ):
-        self.fast_mode = fast_mode
         self.store_key = store_key
-
         self.eviction_policy = eviction_policy
+        self.db_path = db_path if db_path is not None else ":memory:"
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True) if db_path is not None else None
+        self.ram_cache_mb = ram_cache_mb
 
-        if self.eviction_policy == KVIndex.EvictNone:
-            self.max_no_of_elements = 0
-            self.max_size_mb = 0
-        elif self.eviction_policy == KVIndex.EvictAny:
-            if max_size_mb == 0 and max_no_of_elements == 0:
-                raise ValueError(
-                    "At least one of max_size_mb or max_no_of_elements must be set when eviction_policy is EvictAny"
-                )
-        else:
-            raise ValueError(f"Unknown eviction_policy: {eviction_policy}")
+        self.__local_storage = threading.local()
 
-        self.max_size_mb = max_size_mb
-        self.max_no_of_elements = max_no_of_elements
-
-        self.__env = lmdb.open(
-            path=dir,
-            subdir=True,
-            map_size=int(max_size_mb * 1024**2) if max_size_mb > 0 else 512**5,
-            metasync=not fast_mode,
-            sync=not fast_mode,
-            create=True,
-            writemap=fast_mode,
-            max_readers=2048,
-            meminit=False,
-            max_dbs=4,
-        )
-
-        self.__key_hash_to_value_db = self.__env.open_db(
-            b"key_hash_to_value", create=True
-        )
+        columns_needed_and_sql_types = {
+            "key_hash": "BLOB",
+            "pickled_value": "BLOB",
+        }
 
         if self.store_key:
-            self.__key_hash_to_key_db = self.__env.open_db(
-                b"key_hash_to_key", create=True
+            columns_needed_and_sql_types["pickled_key"] = "BLOB"
+        if self.eviction_policy is EvictLRU:
+            columns_needed_and_sql_types["last_accessed_time"] = "INTEGER"
+        elif self.eviction_policy is EvictLFU:
+            columns_needed_and_sql_types["access_frequency"] = "INTEGER"
+        
+        with self.__connection:
+            self.__connection.execute(
+                f"CREATE TABLE IF NOT EXISTS kv_index ({','.join([f'{col} {sql_type}' for col, sql_type in columns_needed_and_sql_types.items()])}, PRIMARY KEY (key_hash))"
+            )
+        
+    
+    @property
+    def __connection(self):
+        if (
+            not hasattr(self.__local_storage, "db_conn")
+            or self.__local_storage.db_conn is None
+        ):
+            self.__local_storage.db_conn = sqlite3.connect(self.db_path, uri=True)
+            self.__local_storage.db_conn.execute("PRAGMA journal_mode=WAL")
+            self.__local_storage.db_conn.execute("PRAGMA synchronous=NORMAL")
+
+            self.__local_storage.db_conn.execute("PRAGMA auto_vacuum=FULL")
+            self.__local_storage.db_conn.execute("PRAGMA auto_vacuum_increment=1000")
+
+            self.__local_storage.db_conn.execute(
+                f"PRAGMA cache_size=-{self.ram_cache_mb * 1024}"
             )
 
-    def __evict(self, txn, min_to_delete=1):
-        if self.max_size_mb:
-            stat = txn.stat(db=self.__key_hash_to_value_db)
+            self.__local_storage.db_conn.execute(
+                f"PRAGMA BUSY_TIMEOUT=60000"
+            )
 
-            current_size_mb = stat["psize"] * stat["leaf_pages"] / 1024**2
-            current_record_count = stat["entries"]
-            if current_size_mb <= self.max_size_mb * 0.8:
-                return
-
-            cursor = txn.cursor(db=self.__key_hash_to_value_db)
-
-            while True:
-                for _ in range(max(current_record_count // 3, min_to_delete)):
-                    if cursor.first():
-                        if self.store_key:
-                            key = cursor.key()
-                            txn.delete(key, db=self.__key_hash_to_key_db)
-                        cursor.delete()
-                    else:
-                        break
-
-                stat = txn.stat(db=self.__key_hash_to_value_db)
-                current_size_mb = stat["psize"] * stat["leaf_pages"] / 1024**2
-                current_record_count = stat["entries"]
-                if current_size_mb <= self.max_size_mb * 0.8:
-                    cursor.close()
-                    return
-        elif self.max_no_of_elements:
-            stat = txn.stat(db=self.__key_hash_to_value_db)
-            current_record_count = stat["entries"]
-            if current_record_count <= self.max_no_of_elements:
-                return
-
-            cursor = txn.cursor(db=self.__key_hash_to_value_db)
-
-            while True:
-                for _ in range(max(current_record_count // 3, min_to_delete)):
-                    if cursor.first():
-                        if self.store_key:
-                            key = cursor.key()
-                            txn.delete(key, db=self.__key_hash_to_key_db)
-                        cursor.delete()
-                    else:
-                        break
+        return self.__local_storage.db_conn
 
     def __setitem__(self, key, value):
-        with self.__env.begin(write=True) as txn:
-            self.__evict(txn)
-            key = (
-                pickle.dumps(key, protocol=pickle.HIGHEST_PROTOCOL)
-                if isinstance(key, str)
-                else key.encode()
-            )
-            pickled_value = (
-                pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
-                if isinstance(value, str)
-                else value.encode()
-            )
+        key = pickle.dumps(key, protocol=pickle.HIGHEST_PROTOCOL)
+        value = pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
+        key_hash = hashlib.sha256(key).digest()
+        
+        data_to_insert = {
+            "key_hash": sqlite3.Binary(key_hash),
+            "pickled_value": sqlite3.Binary(value),
+        }
+        if self.store_key:
+            data_to_insert["pickled_key"] = sqlite3.Binary(key)
+        if self.eviction_policy == EvictLRU:
+            data_to_insert["last_accessed_time"] = int(time.time() * 1000)
+        elif self.eviction_policy == EvictLFU:
+            data_to_insert["access_frequency"] = 1
+        
+        placeholders = ', '.join(['?'] * len(data_to_insert))
+        columns = ', '.join(data_to_insert.keys())
+        values = tuple(data_to_insert.values())
 
-            key_hash = hashlib.sha256(key).digest()
+        update_placeholders = ', '.join([
+            f'{col}=excluded.{col}' for col in data_to_insert.keys()
+            if col != 'key_hash'
+        ])
 
-            txn.put(
-                key_hash, pickled_value, db=self.__key_hash_to_value_db, overwrite=True
+        with self.__connection as conn:
+            conn.execute(
+                f'''INSERT INTO kv_index ({columns}) VALUES ({placeholders})
+                ON CONFLICT(key_hash) DO UPDATE SET {update_placeholders};
+                ''', values
             )
-
-            if self.store_key:
-                txn.put(key_hash, key, db=self.__key_hash_to_key_db, overwrite=False)
 
     def __getitem__(self, key):
-        with self.__env.begin(write=False, buffers=True) as txn:
-            key = (
-                pickle.dumps(key, protocol=pickle.HIGHEST_PROTOCOL)
-                if isinstance(key, str)
-                else key.encode()
-            )
-            key_hash = hashlib.sha256(key).digest()
+        key = pickle.dumps(key, protocol=pickle.HIGHEST_PROTOCOL)
+        key_hash = hashlib.sha256(key).digest()
 
-            result = txn.get(key_hash, db=self.__key_hash_to_value_db)
-
-            if result is None:
+        with self.__connection as conn:
+            row = conn.execute(
+                "SELECT pickled_value FROM kv_index WHERE key_hash = ?", (sqlite3.Binary(key_hash),)
+            ).fetchone()
+            if row is None:
                 raise KeyError(key)
+            return pickle.loads(row[0])
 
-            return pickle.loads(result) if result[0] == 128 else result.decode()
 
-    def update(self, items):
-        with self.__env.begin(write=True) as txn:
-            self.__evict(txn, min_to_delete=len(items))
-            for key, value in items:
-                key = (
-                    pickle.dumps(key, protocol=pickle.HIGHEST_PROTOCOL)
-                    if isinstance(key, str)
-                    else key.encode()
-                )
-                pickled_value = (
-                    pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
-                    if isinstance(value, str)
-                    else value.encode()
-                )
 
-                key_hash = hashlib.sha256(key).digest()
+if __name__ == "__main__":
+    import tempfile
+    kv_index = KVIndex("tkv/a.db")
+    start = time.time()
+    for i in range(10000):
+        kv_index[i] = i
+    print(time.time() - start)
 
-                txn.put(
-                    key_hash,
-                    pickled_value,
-                    db=self.__key_hash_to_value_db,
-                    overwrite=True,
-                )
+    from diskcache import Index
+    index = Index("dkv")
 
-                if self.store_key:
-                    txn.put(
-                        key_hash, key, db=self.__key_hash_to_key_db, overwrite=False
-                    )
+    start = time.time()
+    for i in range(10000):
+        index[i] = i
+    print(time.time() - start)
 
-    def getmulti(self, keys):
-        with self.__env.begin(write=False, buffers=True) as txn:
-            results = []
-            for key in keys:
-                key = (
-                    pickle.dumps(key, protocol=pickle.HIGHEST_PROTOCOL)
-                    if isinstance(key, str)
-                    else key.encode()
-                )
-                key_hash = hashlib.sha256(key).digest()
-
-                result = txn.get(key_hash, db=self.__key_hash_to_value_db)
-
-                results.append(
-                    pickle.loads(result)
-                    if result[0] == 128
-                    else result.decode()
-                    if result is not None
-                    else None
-                )
-
-            return results
+    
