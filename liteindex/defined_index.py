@@ -14,11 +14,6 @@ try:
 except:
     import sqlite3
 
-if sqlite3.sqlite_version < "3.35.0":
-    raise ValueError(
-        "SQLite version must be at least 3.35.0. Please install `pip install sqlean.py`"
-    )
-
 import datetime
 
 try:
@@ -57,6 +52,11 @@ class DefinedIndex:
         ram_cache_mb=64,
         compression_level=-1,
     ):
+        if sqlite3.sqlite_version < "3.35.0":
+            raise ValueError(
+                "SQLite version must be at least 3.35.0. `pip install sqlean.py` or update your python to newer version"
+            )
+
         self.name = name
         self.schema = schema
         self.db_path = ":memory:" if db_path is None else db_path
