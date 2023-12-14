@@ -8,6 +8,7 @@ from .common_utils import set_ulimit
 
 set_ulimit()
 
+
 class Cache:
     def __init__(self, dir=tempfile.mkdtemp(), max_size_mb=2048, eviction_policy=None):
         self.dir = dir
@@ -17,7 +18,7 @@ class Cache:
         self.__env = lmdb.open(
             path=dir,
             subdir=True,
-            map_size=max_size_mb * 1024**2 if eviction_policy else 512 ** 5,
+            map_size=max_size_mb * 1024**2 if eviction_policy else 512**5,
             metasync=True,
             sync=True,
             create=True,
@@ -53,20 +54,25 @@ class Cache:
                 b"key_hash_to_access_count", create=True
             )
 
-    
     def __setitem__(self, key, value):
         with self.__env.begin(write=True) as txn:
             txn.put(
-                hashlib.sha256(pickle.dumps(key, protocol=pickle.HIGHEST_PROTOCOL)).digest(),
+                hashlib.sha256(
+                    pickle.dumps(key, protocol=pickle.HIGHEST_PROTOCOL)
+                ).digest(),
                 pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL),
                 db=self.__cache_db,
             )
-    
+
     def __getitem__(self, key):
         with self.__env.begin(write=False) as txn:
-            result = txn.get(hashlib.sha256(pickle.dumps(key, protocol=pickle.HIGHEST_PROTOCOL)).digest(), db=self.__cache_db)
+            result = txn.get(
+                hashlib.sha256(
+                    pickle.dumps(key, protocol=pickle.HIGHEST_PROTOCOL)
+                ).digest(),
+                db=self.__cache_db,
+            )
             return pickle.loads(result) if result is not None else None
-    
 
 
 if __name__ == "__main__":
@@ -77,9 +83,9 @@ if __name__ == "__main__":
     print(time.time() - s)
 
     import diskcache
+
     dc_cache = diskcache.Index(tempfile.mkdtemp())
     s = time.time()
     for i in range(100000):
         dc_cache[i] = i
     print(time.time() - s)
-    
