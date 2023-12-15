@@ -183,7 +183,11 @@ class KVIndex:
             if not isinstance(key, str)
             else key.encode()
         )
-        value = pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
+        value = (
+            pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
+            if not isinstance(value, str)
+            else value.encode()
+        )
         key_hash = hashlib.sha256(key).digest() if len(key) <= 32 else key
 
         row_size = len(key_hash) + len(value)
@@ -233,8 +237,12 @@ class KVIndex:
             )
 
     def __getitem__(self, key):
-        key = pickle.dumps(key, protocol=pickle.HIGHEST_PROTOCOL)
-        key_hash = hashlib.sha256(key).digest()
+        key = (
+            pickle.dumps(key, protocol=pickle.HIGHEST_PROTOCOL)
+            if not isinstance(key, str)
+            else key.encode()
+        )
+        key_hash = hashlib.sha256(key).digest() if len(key) <= 32 else key
 
         where_clause = (
             "WHERE key_hash = ?"
@@ -243,7 +251,7 @@ class KVIndex:
         )
 
         if self.eviction.policy in {EvictionCfg.EvictAny, EvictionCfg.EvictNone}:
-            row = conn.execute(
+            row = self.__connection.execute(
                 f"SELECT pickled_value FROM kv_index {where_clause}",
                 (sqlite3.Binary(key_hash),),
             ).fetchone()
@@ -260,11 +268,16 @@ class KVIndex:
                         f"UPDATE kv_index SET access_frequency = access_frequency + 1 {where_clause} RETURNING pickled_value",
                         (sqlite3.Binary(key_hash),),
                     ).fetchone()
+                elif self.eviction.policy == EvictionCfg.EvictAny:
+                    row = conn.execute(
+                        f"UPDATE kv_index SET updated_at = ? {where_clause} RETURNING pickled_value",
+                        (self.__current_time(), sqlite3.Binary(key_hash)),
+                    ).fetchone()
 
         if row is None:
             raise KeyError
 
-        return pickle.loads(row[0])
+        return pickle.loads(row[0]) if len(row[0]) > 32 else row[0].decode()
 
     def get(self, key, default=None, return_metadata=False):
         pass
@@ -273,7 +286,14 @@ class KVIndex:
         sql = f"SELECT {'pickled_key' if self.store_key else 'key_hash'}, pickled_value FROM kv_index {'ORDER BY updated_at' if self.preserve_order else ''} {'DESC' if reverse else ''}"
         with self.__connection as conn:
             for row in conn.execute(sql):
-                yield pickle.loads(row[0]), pickle.loads(row[1])
+                yield (
+                    pickle.loads(row[0])
+                    if len(row[0]) > 32
+                    else row[0]
+                    if self.store_key
+                    else row[0],
+                    pickle.loads(row[1]),
+                )
 
 
 if __name__ == "__main__":
