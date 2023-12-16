@@ -1,8 +1,13 @@
 # ----------- Update ulimit -----------
-import resource
+try:
+    import resource
+except:
+    resource = None
 
 
 def set_ulimit():
+    if resource is None:
+        return
     soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
 
     limit = hard - 1
