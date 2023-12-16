@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <!-- Required meta tags -->
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <!-- Bootstrap CSS -->
+    <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" rel="stylesheet">
+    
+    <title>KVIndex Documentation</title>
+
+</head>
+<body>
+    <div class="container mt-4">
+        <h1 class="mb-4">KVIndex Documentation</h1>
+        <!-- KVIndex Introduction -->
+        <p>A thread-safe, process-safe key-value store that mimics Python's dict interface with ACID properties and supports various eviction policies including LRU, LFU, FIFO, and random.</p>
+        
+        <!-- Initialize section -->
+        <h2>Initialize</h2>
+        <pre><code class="python">from liteindex import KVIndex
+kv_index = KVIndex(db_path="./test.liteindex")
+</code></pre>
+
+        <h3>Parameters</h3>
+        <ul>
+            <li><strong>db_path</strong>: Path to the index file. Defaults to None, which will create an in-memory index.</li>
+            <li><strong>store_key</strong>: Defaults to True. If set to False, index can only be used for lookup.</li>
+            <li><strong>preserve_order</strong>: Defaults to True. If set to False, insert/update order is not preserved.</li>
+            <li><strong>ram_cache_mb</strong>: Size of the RAM cache in MB. Defaults to 32.</li>
+            <li><strong>eviction</strong>: Eviction policy. Defaults to EvictionCfg(EvictionCfg.EvictNone).</li>
+        </ul>
+
+        <!-- Insert/Update section -->
+        <h2>Insert/Update single or multiple</h2>
+        <pre><code class="python">kv_index["key1"] = "value1"
+kv_index.update({"key2": "value2", "key3": "value3"})
+</code></pre>
+
+        <!-- Get section -->
+        <h2>Get single or multiple</h2>
+        <pre><code class="python">kv_index["key1"]
+kv_index.get("key1", "default_value")
+kv_index.getvalues(["key1", "key2"])
+</code></pre>
+
+        <!-- Delete section -->
+        <h2>Delete single or multiple, clear</h2>
+        <pre><code class="python">del kv_index["key1"]
+kv_index.delete(["key1", "key2"])
+
+kv_index.clear()
+</code></pre>
+
+        <!-- Iteration section -->
+        <h2>Iteration and reverse iteration</h2>
+        <pre><code class="python">for key in kv_index: pass
+
+for key in kv_index.keys(reverse=True): pass
+for value in kv_index.values(reverse=True): pass
+for key, value in kv_index.items(reverse=True): pass
+</code></pre>
+
+        <!-- len, contains section -->
+        <h2>len, contains</h2>
+        <pre><code class="python">len(kv_index)
+"key1" in kv_index
+</code></pre>
+
+        <!-- EvictionCFG section -->
+        <h2>EvictionCFG</h2>
+        <p>Configure the eviction policy using the EvictionCfg class.</p>
+        <pre><code class="python">from liteindex import EvictionCfg
+eviction_cfg = EvictionCfg(
+    eviction_policy=EvictionCfg.EvictNone, # Eviction policies: EvictNone, EvictLRU, EvictLFU, EvictAny
+    max_size_in_mb=0, # No size-based eviction
+    max_number_of_items=0, # No count-based eviction
+    invalidate_after_seconds=0, # No time-based eviction
+)
+</code></pre>
+    
+    </div>
+
+    <!-- Bootstrap Bundle with Popper -->
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

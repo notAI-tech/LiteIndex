@@ -532,6 +532,10 @@ class KVIndex:
         if self.__connection:
             self.__connection.close()
 
+    def vaccum(self):
+        with self.__connection as conn:
+            conn.execute("VACUUM")
+
     def update(self, items, reverse_order=False):
         data_to_insert = []
         key_hashes = []

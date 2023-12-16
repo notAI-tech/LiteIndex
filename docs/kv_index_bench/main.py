@@ -2,7 +2,7 @@ import time
 
 from liteindex import KVIndex
 from diskcache import Index 
-from pyscript import display
+# from pyscript import display
 
 kv_index = KVIndex("kv.db")
 dc_index = Index("dc", eviction_policy="none")
@@ -97,6 +97,7 @@ s = time.time()
 for _ in range(1, N):
     _ = str(_)
     del kv_index[_]
+kv_index.vaccum()
 TIMES["delete"]["liteindex"] = (time.time() - s)/N
 
 print("Diskcache: Index Delete test running")
@@ -105,6 +106,14 @@ for _ in range(1, N):
     _ = str(_)
     del dc_index[_]
 TIMES["delete"]["diskcache"] = (time.time() - s)/N
+
+del kv_index
+del dc_index
+
+# print sizes of databases
+import os
+print(f"Liteindex: KVIndex size: {os.path.getsize('kv.db')}")
+print(f"Diskcache: Index size: {os.path.getsize('dc/cache.db')}")
 
 import matplotlib.pyplot as plt
 import numpy as np
