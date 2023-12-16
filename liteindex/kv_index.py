@@ -22,10 +22,10 @@ class KVIndex:
         self.store_key = store_key
         self.eviction = eviction
         self.db_path = db_path if db_path is not None else ":memory:"
-        
-        os.makedirs(
-            os.path.dirname(self.db_path), exist_ok=True
-        ) if os.path.dirname(self.db_path) else None
+
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True) if os.path.dirname(
+            self.db_path
+        ) else None
 
         self.ram_cache_mb = ram_cache_mb
         self.preserve_order = preserve_order
@@ -46,6 +46,9 @@ class KVIndex:
             columns_needed_and_sql_types["last_accessed_time"] = "INTEGER"
         elif self.eviction.policy is EvictionCfg.EvictLFU:
             columns_needed_and_sql_types["access_frequency"] = "INTEGER"
+
+        if self.eviction.max_size_in_mb:
+            columns_needed_and_sql_types["size_in_bytes"] = "INTEGER"
 
         with self.__connection as conn:
             conn.execute(
@@ -76,7 +79,6 @@ class KVIndex:
                     "CREATE INDEX IF NOT EXISTS kv_index_updated_at_idx ON kv_index(updated_at)"
                 )
 
-            if self.eviction.invalidate_after_seconds > 0:
                 # trigger to delete old rows before read occurs
                 conn.execute(
                     f"""
@@ -109,25 +111,6 @@ class KVIndex:
 
         return self.__local_storage.db_conn
 
-    @property
-    def size_in_mb(self):
-        return (
-            self.__connection.execute(
-                """
-            SELECT
-                SUM(pgsize) as total_db_size
-            FROM
-                dbstat
-            WHERE
-                aggregate = TRUE;
-            """
-            ).fetchone()[0]
-            / (1024 * 1024)
-        )
-
-    def __len__(self):
-        return self.__connection.execute("SELECT COUNT(*) FROM kv_index").fetchone()[0]
-
     def __current_time(self):
         return int(time.time() * 1000000)
 
@@ -154,8 +137,8 @@ class KVIndex:
                     int(current_number_of_rows * percent_to_evict), 1
                 )
 
-        elif self.eviction.max_number_of_rows:
-            if current_number_of_rows >= self.eviction.max_number_of_rows:
+        elif self.eviction.max_number_of_items:
+            if current_number_of_rows >= self.eviction.max_number_of_items:
                 number_of_rows_to_evict = max(
                     int(current_number_of_rows * percent_to_evict), 1
                 )
@@ -163,18 +146,41 @@ class KVIndex:
         if number_of_rows_to_evict == 0:
             return
 
-        if self.eviction.policy == EvictionCfg.EvictLRU:
-            conn.execute(
-                f"DELETE FROM kv_index WHERE ROWID IN (SELECT ROWID FROM kv_index ORDER BY last_accessed_time ASC LIMIT {number_of_rows_to_evict})"
-            )
-        elif self.eviction.policy == EvictionCfg.EvictLFU:
-            conn.execute(
-                f"DELETE FROM kv_index WHERE ROWID IN (SELECT ROWID FROM kv_index ORDER BY access_frequency ASC LIMIT {number_of_rows_to_evict})"
-            )
-        elif self.eviction.policy == EvictionCfg.EvictAny:
-            conn.execute(
-                f"DELETE FROM kv_index WHERE ROWID IN (SELECT ROWID FROM kv_index LIMIT {number_of_rows_to_evict})"
-            )
+        if not self.eviction.max_size_in_mb:
+            if self.eviction.policy == EvictionCfg.EvictLRU:
+                conn.execute(
+                    f"DELETE FROM kv_index WHERE ROWID IN (SELECT ROWID FROM kv_index ORDER BY last_accessed_time ASC LIMIT {number_of_rows_to_evict})"
+                )
+            elif self.eviction.policy == EvictionCfg.EvictLFU:
+                conn.execute(
+                    f"DELETE FROM kv_index WHERE ROWID IN (SELECT ROWID FROM kv_index ORDER BY access_frequency{', updated_at' if self.preserve_order else ''} ASC LIMIT {number_of_rows_to_evict})"
+                )
+            elif self.eviction.policy == EvictionCfg.EvictAny:
+                conn.execute(
+                    f"DELETE FROM kv_index WHERE ROWID IN (SELECT ROWID FROM kv_index LIMIT {number_of_rows_to_evict})"
+                )
+        else:
+            if self.eviction.policy == EvictionCfg.EvictLRU:
+                sizes = conn.execute(
+                    f"DELETE FROM kv_index WHERE ROWID IN (SELECT ROWID FROM kv_index ORDER BY last_accessed_time ASC LIMIT {number_of_rows_to_evict}) RETURNING size_in_bytes"
+                ).fetchall()
+            elif self.eviction.policy == EvictionCfg.EvictLFU:
+                sizes = conn.execute(
+                    f"DELETE FROM kv_index WHERE ROWID IN (SELECT ROWID FROM kv_index ORDER BY access_frequency{', updated_at' if self.preserve_order else ''} ASC LIMIT {number_of_rows_to_evict}) RETURNING size_in_bytes"
+                ).fetchall()
+            elif self.eviction.policy == EvictionCfg.EvictAny:
+                sizes = conn.execute(
+                    f"DELETE FROM kv_index WHERE ROWID IN (SELECT ROWID FROM kv_index LIMIT {number_of_rows_to_evict}) RETURNING size_in_bytes"
+                ).fetchall()
+
+            if sizes:
+                conn.execute(
+                    "UPDATE kv_index_num_metadata SET num = num - ? WHERE key = ?",
+                    (
+                        sum([size[0] for size in sizes]) / (1024 * 1024),
+                        "current_size_in_mb",
+                    ),
+                )
 
     def __setitem__(self, key, value):
         if self.store_key:
@@ -186,7 +192,7 @@ class KVIndex:
 
         value = self.__encode(value)
 
-        row_size = len(key_hash) + len(value)
+        row_size_in_bytes = len(key_hash) + len(value)
 
         data_to_insert = {
             "key_hash": sqlite3.Binary(key_hash),
@@ -194,9 +200,9 @@ class KVIndex:
         }
 
         _time = self.__current_time()
-        
+
         if self.store_key and key is not None:
-            row_size += len(key)
+            row_size_in_bytes += len(key)
             data_to_insert["pickled_key"] = sqlite3.Binary(key)
 
         if self.preserve_order:
@@ -206,6 +212,9 @@ class KVIndex:
             data_to_insert["last_accessed_time"] = _time
         elif self.eviction.policy == EvictionCfg.EvictLFU:
             data_to_insert["access_frequency"] = 1
+
+        if self.eviction.max_size_in_mb:
+            data_to_insert["size_in_bytes"] = row_size_in_bytes
 
         placeholders = ", ".join(["?"] * len(data_to_insert))
         columns = ", ".join(data_to_insert.keys())
@@ -222,6 +231,16 @@ class KVIndex:
         with self.__connection as conn:
             self.__run_eviction(conn)
 
+            old_row_size_in_bytes = 0
+            if self.eviction.max_size_in_mb:
+                _old_row_size_in_bytes = conn.execute(
+                    "SELECT size_in_bytes FROM kv_index WHERE key_hash = ?",
+                    (sqlite3.Binary(key_hash),),
+                ).fetchone()
+
+                if _old_row_size_in_bytes is not None:
+                    old_row_size_in_bytes = _old_row_size_in_bytes[0]
+
             conn.execute(
                 f"""INSERT INTO kv_index ({columns}) VALUES ({placeholders})
                 ON CONFLICT(key_hash) DO UPDATE SET {update_placeholders};
@@ -231,23 +250,18 @@ class KVIndex:
 
             conn.execute(
                 "UPDATE kv_index_num_metadata SET num = num + ? WHERE key = ?",
-                (row_size / (1024 * 1024), "current_size_in_mb"),
+                (
+                    (row_size_in_bytes - old_row_size_in_bytes) / (1024 * 1024),
+                    "current_size_in_mb",
+                ),
             )
 
     def __getitem__(self, key):
-        key_hash, _ = self.__encode_and_hash(
-            key, return_encoded_key=False
-        )
-
-        where_clause = (
-            "WHERE key_hash = ?"
-            if not self.eviction.invalidate_after_seconds
-            else "WHERE key_hash = ? AND updated_at > ?"
-        )
+        key_hash, _ = self.__encode_and_hash(key, return_encoded_key=False)
 
         if self.eviction.policy in {EvictionCfg.EvictAny, EvictionCfg.EvictNone}:
             row = self.__connection.execute(
-                f"SELECT pickled_value FROM kv_index {where_clause}",
+                f"SELECT pickled_value FROM kv_index WHERE key_hash = ?",
                 (sqlite3.Binary(key_hash),),
             ).fetchone()
 
@@ -255,17 +269,17 @@ class KVIndex:
             with self.__connection as conn:
                 if self.eviction.policy == EvictionCfg.EvictLRU:
                     row = conn.execute(
-                        f"UPDATE kv_index SET last_accessed_time = ? {where_clause} RETURNING pickled_value",
+                        f"UPDATE kv_index SET last_accessed_time = ? WHERE key_hash = ? RETURNING pickled_value",
                         (self.__current_time(), sqlite3.Binary(key_hash)),
                     ).fetchone()
                 elif self.eviction.policy == EvictionCfg.EvictLFU:
                     row = conn.execute(
-                        f"UPDATE kv_index SET access_frequency = access_frequency + 1 {where_clause} RETURNING pickled_value",
+                        f"UPDATE kv_index SET access_frequency = access_frequency + 1 WHERE key_hash = ? RETURNING pickled_value",
                         (sqlite3.Binary(key_hash),),
                     ).fetchone()
                 elif self.eviction.policy == EvictionCfg.EvictAny:
                     row = conn.execute(
-                        f"UPDATE kv_index SET updated_at = ? {where_clause} RETURNING pickled_value",
+                        f"UPDATE kv_index SET updated_at = ? WHERE key_hash = ? RETURNING pickled_value",
                         (self.__current_time(), sqlite3.Binary(key_hash)),
                     ).fetchone()
 
@@ -274,75 +288,121 @@ class KVIndex:
 
         return self.__decode_value(row[0])
 
+    def getvalues(self, keys, default=None):
+        key_hashes = [self.__encode_and_hash(key)[0] for key in keys]
+
+        if self.eviction.policy in {EvictionCfg.EvictAny, EvictionCfg.EvictNone}:
+            rows = self.__connection.execute(
+                f"SELECT key_hash, pickled_value FROM kv_index WHERE key_hash IN ({', '.join(['?'] * len(key_hashes))})",
+                key_hashes,
+            ).fetchall()
+
+        else:
+            with self.__connection as conn:
+                if self.eviction.policy == EvictionCfg.EvictLRU:
+                    rows = conn.execute(
+                        f"UPDATE kv_index SET last_accessed_time = ? WHERE key_hash IN ({', '.join(['?'] * len(key_hashes))}) RETURNING key_hash, pickled_value",
+                        (self.__current_time(), *key_hashes),
+                    ).fetchall()
+                elif self.eviction.policy == EvictionCfg.EvictLFU:
+                    rows = conn.execute(
+                        f"UPDATE kv_index SET access_frequency = access_frequency + 1 WHERE key_hash IN ({', '.join(['?'] * len(key_hashes))}) RETURNING key_hash, pickled_value",
+                        key_hashes,
+                    ).fetchall()
+                elif self.eviction.policy == EvictionCfg.EvictAny:
+                    rows = conn.execute(
+                        f"UPDATE kv_index SET updated_at = ? WHERE key_hash IN ({', '.join(['?'] * len(key_hashes))}) RETURNING key_hash, pickled_value",
+                        (self.__current_time(), *key_hashes),
+                    ).fetchall()
+
+        if rows is None:
+            return [default] * len(keys)
+
+        rows = {row[0]: row[1] for row in rows}
+
+        return [
+            self.__decode_value(rows.get(key_hash, default)) for key_hash in key_hashes
+        ]
+
     def items(self):
         if not self.store_key:
             raise Exception("Cannot iterate over items when store_key is False")
 
-        sql = f"SELECT key_hash, pickled_key, pickled_value FROM kv_index {' WHERE updated_at > ?' if self.eviction.invalidate_after_seconds else ''} {'ORDER BY updated_at' if self.preserve_order else ''}"
+        sql = f"SELECT key_hash, pickled_key, pickled_value FROM kv_index {'ORDER BY updated_at' if self.preserve_order else ''}"
 
-        for row in self.__connection.execute(
-            sql,
-            (self.__current_time() - self.eviction.invalidate_after_seconds)
-            if self.eviction.invalidate_after_seconds
-            else ()
-        ):
+        for row in self.__connection.execute(sql):
             if row is None:
                 break
-            
+
             key_hash = row[0]
             key = row[1]
             value = row[2]
 
-            yield (
-                self.__decode_key(key, key_hash),
-                self.__decode_value(value)
-            )
-    
+            yield (self.__decode_key(key, key_hash), self.__decode_value(value))
+
     def keys(self):
         if not self.store_key:
             raise Exception("Cannot iterate over keys when store_key is False")
 
-        sql = f"SELECT key_hash, pickled_key FROM kv_index {' WHERE updated_at > ?' if self.eviction.invalidate_after_seconds else ''} {'ORDER BY updated_at' if self.preserve_order else ''}"
+        sql = f"SELECT key_hash, pickled_key FROM kv_index {'ORDER BY updated_at' if self.preserve_order else ''}"
 
-        for row in self.__connection.execute(
-            sql,
-            (self.__current_time() - self.eviction.invalidate_after_seconds)
-            if self.eviction.invalidate_after_seconds
-            else ()
-        ):
+        for row in self.__connection.execute(sql):
             if row is None:
                 break
-            
+
             key_hash = row[0]
             key = row[1]
 
             yield self.__decode_key(key, key_hash)
-    
-    def values(self):
-        sql = f"SELECT pickled_value FROM kv_index {' WHERE updated_at > ?' if self.eviction.invalidate_after_seconds else ''} {'ORDER BY updated_at' if self.preserve_order else ''}"
 
-        for row in self.__connection.execute(
-            sql,
-            (self.__current_time() - self.eviction.invalidate_after_seconds)
-            if self.eviction.invalidate_after_seconds
-            else ()
-        ):
+    def values(self):
+        sql = f"SELECT pickled_value FROM kv_index {'ORDER BY updated_at' if self.preserve_order else ''}"
+
+        for row in self.__connection.execute(sql):
             if row is None:
                 break
-            
+
             value = row[0]
 
             yield self.__decode_value(value)
-    
+
     def __len__(self):
         return self.__connection.execute("SELECT COUNT(*) FROM kv_index").fetchone()[0]
-    
+
     def __contains__(self, key):
         if self.__connection.execute(
             "SELECT COUNT(*) FROM kv_index WHERE key_hash = ?",
             (sqlite3.Binary(self.__encode_and_hash(key)[0]),),
-        ).fetchone():
+        ).fetchone()[0]:
             return True
+
+        return False
+
+    def __delitem__(self, key):
+        key_hash, _ = self.__encode_and_hash(key, return_encoded_key=False)
+
+        with self.__connection as conn:
+            if self.eviction.max_size_in_mb:
+                size = conn.execute(
+                    "DELETE FROM kv_index WHERE key_hash = ? RETURNING size_in_bytes",
+                    (sqlite3.Binary(key_hash),),
+                ).fetchone()
+
+                if size:
+                    conn.execute(
+                        "UPDATE kv_index_num_metadata SET num = num - ? WHERE key = ?",
+                        (size[0] / (1024 * 1024), "current_size_in_mb"),
+                    )
+                else:
+                    raise KeyError
+            else:
+                conn.execute(
+                    "DELETE FROM kv_index WHERE key_hash = ?",
+                    (sqlite3.Binary(key_hash),),
+                )
+
+    def __iter__(self):
+        return self.keys()
 
     def get(self, key, default=None):
         try:
@@ -370,26 +430,101 @@ class KVIndex:
             k = k_h
 
         return pickle.loads(k) if k and k[0] == 128 else k.decode()
-    
+
     def __decode_value(self, x):
+        if x is None:
+            return None
         return pickle.loads(x) if x and x[0] == 128 else x.decode()
 
-    def getmulti(self, keys, default=None):
-        key_hashes = [self.__encode_and_hash(key) for key in keys]
+    def __del__(self):
+        if self.__connection:
+            self.__connection.close()
 
-        where_clause = (
-            "WHERE key_hash IN ({})".format(",".join(["?"] * len(key_hashes)))
-            if not self.eviction.invalidate_after_seconds
-            else "WHERE key_hash IN ({}) AND updated_at > ?".format(
-                ",".join(["?"] * len(key_hashes))
-            )
+    def update(self, items):
+        data_to_insert = []
+        key_hashes = []
+        total_new_sizes = 0
+
+        for key, value in items.items():
+            if self.store_key:
+                key_hash, key = self.__encode_and_hash(
+                    key, return_encoded_key=self.store_key
+                )
+            else:
+                key_hash = self.__encode_and_hash(
+                    key, return_encoded_key=self.store_key
+                )
+
+            value = self.__encode(value)
+
+            row_size_in_bytes = len(key_hash) + len(value)
+
+            if self.store_key and key is not None:
+                row_size_in_bytes += len(key)
+
+            total_new_sizes += row_size_in_bytes
+            key_hashes.append(key_hash)
+
+            data = {
+                "key_hash": sqlite3.Binary(key_hash),
+                "pickled_value": sqlite3.Binary(value),
+            }
+
+            _time = self.__current_time()
+
+            if self.store_key and key is not None:
+                data["pickled_key"] = sqlite3.Binary(key)
+
+            if self.preserve_order:
+                data["updated_at"] = _time
+
+            if self.eviction.policy == EvictionCfg.EvictLRU:
+                data["last_accessed_time"] = _time
+            elif self.eviction.policy == EvictionCfg.EvictLFU:
+                data["access_frequency"] = 1
+
+            if self.eviction.max_size_in_mb:
+                data["size_in_bytes"] = row_size_in_bytes
+
+            data_to_insert.append(tuple(data.values()))
+
+        placeholders = ", ".join(["?"] * len(data))
+        columns = ", ".join(data.keys())
+
+        update_placeholders = ", ".join(
+            [f"{col}=excluded.{col}" for col in data.keys() if col != "key_hash"]
         )
 
-        return [
-            self.__decode_key(row[0]) if row is not None else default
-            for row in self.__connection.execute(
-                f"SELECT pickled_value FROM kv_index {where_clause}",
-                [sqlite3.Binary(key_hash) for key_hash in key_hashes]
-                + [self.__current_time() - self.eviction.invalidate_after_seconds],
+        with self.__connection as conn:
+            self.__run_eviction(conn)
+
+            if self.eviction.max_size_in_mb:
+                sizes = conn.execute(
+                    f"SELECT size_in_bytes FROM kv_index WHERE key_hash IN ({', '.join(['?'] * len(key_hashes))})",
+                    key_hashes,
+                ).fetchall()
+
+                total_old_sizes = sum(size[0] for size in sizes)
+
+                conn.execute(
+                    "UPDATE kv_index_num_metadata SET num = num - ? WHERE key = ?",
+                    (total_old_sizes / (1024 * 1024), "current_size_in_mb"),
+                )
+            else:
+                total_old_sizes = 0
+
+            conn.executemany(
+                f"""INSERT INTO kv_index ({columns}) VALUES ({placeholders})
+                ON CONFLICT(key_hash) DO UPDATE SET {update_placeholders};
+                """,
+                data_to_insert,
             )
-        ]
+
+            if self.eviction.max_size_in_mb:
+                conn.execute(
+                    "UPDATE kv_index_num_metadata SET num = num + ? WHERE key = ?",
+                    (
+                        (total_new_sizes - total_old_sizes) / (1024 * 1024),
+                        "current_size_in_mb",
+                    ),
+                )
