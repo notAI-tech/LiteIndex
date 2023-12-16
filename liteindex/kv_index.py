@@ -17,7 +17,7 @@ class KVIndex:
         store_key=True,
         preserve_order=True,
         ram_cache_mb=32,
-        eviction=EvictionCfg(EvictionCfg.EvictNone),
+        eviction=EvictionCfg(EvictionCfg.EvictNone)
     ):
         self.store_key = store_key
         self.eviction = eviction
@@ -192,7 +192,10 @@ class KVIndex:
                     ),
                 )
 
-    def __setitem__(self, key, value):
+    def set(self, key, value, reverse_order=False):
+        self.__setitem__(key, value, reverse_order=reverse_order)
+
+    def __setitem__(self, key, value, reverse_order=False):
         if self.store_key:
             key_hash, key = self.__encode_and_hash(
                 key, return_encoded_key=self.store_key
@@ -216,7 +219,7 @@ class KVIndex:
             data_to_insert["pickled_key"] = sqlite3.Binary(key)
 
         if self.preserve_order:
-            data_to_insert["updated_at"] = _time
+            data_to_insert["updated_at"] = (-1 * _time) if reverse_order else _time
 
         if self.eviction.policy == EvictionCfg.EvictLRU:
             data_to_insert["last_accessed_time"] = _time
@@ -334,7 +337,7 @@ class KVIndex:
             self.__decode_value(rows.get(key_hash, default)) for key_hash in key_hashes
         ]
 
-    def items(self):
+    def items(self, reverse=False):
         if not self.store_key:
             raise Exception("Cannot iterate over items when store_key is False")
 
@@ -365,7 +368,7 @@ class KVIndex:
 
             yield self.__decode_key(key, key_hash)
 
-    def values(self):
+    def values(self, reverse=False):
         sql = f"SELECT pickled_value FROM kv_index {'ORDER BY updated_at' if self.preserve_order else ''} {'DESC' if reverse else ''}"
 
         for row in self.__connection.execute(sql):
@@ -416,6 +419,71 @@ class KVIndex:
                     f"DELETE FROM kv_index WHERE key_hash IN ({', '.join(['?'] * len(key_hashes))})",
                     key_hashes,
                 )
+    
+    def pop(self, key):
+        with self.__connection as conn:
+            # assume delete from returning query is suported and write a single query that returns the value, size_in_bytes and deletes the row
+            if self.eviction.max_size_in_mb:
+                row = conn.execute(
+                    f"DELETE FROM kv_index WHERE key_hash = ? RETURNING pickled_value, size_in_bytes",
+                    (sqlite3.Binary(self.__encode_and_hash(key)[0]),),
+                ).fetchone()
+
+                if row is None:
+                    raise KeyError
+
+                conn.execute(
+                    "UPDATE kv_index_num_metadata SET num = num - ? WHERE key = ?",
+                    (
+                        row[1] / (1024 * 1024),
+                        "current_size_in_mb",
+                    ),
+                )
+
+                return self.__decode_value(row[0])
+            else:
+                row = conn.execute(
+                    f"DELETE FROM kv_index WHERE key_hash = ? RETURNING pickled_value",
+                    (sqlite3.Binary(self.__encode_and_hash(key)[0]),),
+                ).fetchone()
+
+                if row is None:
+                    raise KeyError
+
+                return self.__decode_value(row[0])
+    
+    def popitems(self, n=1, reverse=True):
+        with self.__connection as conn:
+            if self.eviction.max_size_in_mb:
+                rows = conn.execute(
+                    f"DELETE FROM kv_index WHERE ROWID IN (SELECT ROWID FROM kv_index ORDER BY updated_at {'DESC' if reverse else ''} LIMIT {n}) RETURNING pickled_key, pickled_value, size_in_bytes",
+                ).fetchall()
+
+                if rows is None:
+                    raise KeyError
+
+                conn.execute(
+                    "UPDATE kv_index_num_metadata SET num = num - ? WHERE key = ?",
+                    (
+                        sum([row[2] for row in rows]) / (1024 * 1024),
+                        "current_size_in_mb",
+                    ),
+                )
+
+                return [(self.__decode_key(row[0], None), self.__decode_value(row[1])) for row in rows]
+            else:
+                rows = conn.execute(
+                    f"DELETE FROM kv_index WHERE ROWID IN (SELECT ROWID FROM kv_index ORDER BY updated_at {'DESC' if reverse else ''} LIMIT {n}) RETURNING pickled_key, pickled_value",
+                ).fetchall()
+
+                if rows is None:
+                    raise KeyError
+
+                return [(self.__decode_key(row[0], None), self.__decode_value(row[1])) for row in rows]
+    
+    def popitem(self, reverse=True):
+        self.popitems(n=1, reverse=reverse)[0]
+        
 
     def clear(self):
         with self.__connection as conn:
@@ -464,12 +532,12 @@ class KVIndex:
         if self.__connection:
             self.__connection.close()
 
-    def update(self, items):
+    def update(self, items, reverse_order=False):
         data_to_insert = []
         key_hashes = []
         total_new_sizes = 0
 
-        for key, value in items.items():
+        for key, value in reversed(items.items()):
             if self.store_key:
                 key_hash, key = self.__encode_and_hash(
                     key, return_encoded_key=self.store_key
@@ -496,11 +564,11 @@ class KVIndex:
 
             _time = self.__current_time()
 
-            if self.store_key and key is not None:
-                data["pickled_key"] = sqlite3.Binary(key)
+            if self.store_key:
+                data["pickled_key"] = sqlite3.Binary(key) if key is not None else None
 
             if self.preserve_order:
-                data["updated_at"] = _time
+                data["updated_at"] = (-1 * _time) if reverse_order else _time
 
             if self.eviction.policy == EvictionCfg.EvictLRU:
                 data["last_accessed_time"] = _time
