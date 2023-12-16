@@ -28,7 +28,9 @@ class KVIndex:
         ) else None
 
         self.ram_cache_mb = ram_cache_mb
-        self.preserve_order = preserve_order
+        self.preserve_order = (
+            preserve_order or self.eviction.policy == EvictionCfg.EvictFIFO
+        )
 
         self.__local_storage = threading.local()
 
@@ -159,6 +161,10 @@ class KVIndex:
                 conn.execute(
                     f"DELETE FROM kv_index WHERE ROWID IN (SELECT ROWID FROM kv_index LIMIT {number_of_rows_to_evict})"
                 )
+            elif self.eviction.policy == EvictionCfg.EvictFIFO:
+                conn.execute(
+                    f"DELETE FROM kv_index WHERE ROWID IN (SELECT ROWID FROM kv_index ORDER BY updated_at ASC LIMIT {number_of_rows_to_evict})"
+                )
         else:
             if self.eviction.policy == EvictionCfg.EvictLRU:
                 sizes = conn.execute(
@@ -171,6 +177,10 @@ class KVIndex:
             elif self.eviction.policy == EvictionCfg.EvictAny:
                 sizes = conn.execute(
                     f"DELETE FROM kv_index WHERE ROWID IN (SELECT ROWID FROM kv_index LIMIT {number_of_rows_to_evict}) RETURNING size_in_bytes"
+                ).fetchall()
+            elif self.eviction.policy == EvictionCfg.EvictFIFO:
+                sizes = conn.execute(
+                    f"DELETE FROM kv_index WHERE ROWID IN (SELECT ROWID FROM kv_index ORDER BY updated_at ASC LIMIT {number_of_rows_to_evict}) RETURNING size_in_bytes"
                 ).fetchall()
 
             if sizes:
@@ -328,7 +338,7 @@ class KVIndex:
         if not self.store_key:
             raise Exception("Cannot iterate over items when store_key is False")
 
-        sql = f"SELECT key_hash, pickled_key, pickled_value FROM kv_index {'ORDER BY updated_at' if self.preserve_order else ''}"
+        sql = f"SELECT key_hash, pickled_key, pickled_value FROM kv_index {'ORDER BY updated_at' if self.preserve_order else ''} {'DESC' if reverse else ''}"
 
         for row in self.__connection.execute(sql):
             if row is None:
@@ -340,11 +350,11 @@ class KVIndex:
 
             yield (self.__decode_key(key, key_hash), self.__decode_value(value))
 
-    def keys(self):
+    def keys(self, reverse=False):
         if not self.store_key:
             raise Exception("Cannot iterate over keys when store_key is False")
 
-        sql = f"SELECT key_hash, pickled_key FROM kv_index {'ORDER BY updated_at' if self.preserve_order else ''}"
+        sql = f"SELECT key_hash, pickled_key FROM kv_index {'ORDER BY updated_at' if self.preserve_order else ''} {'DESC' if reverse else ''}"
 
         for row in self.__connection.execute(sql):
             if row is None:
@@ -356,7 +366,7 @@ class KVIndex:
             yield self.__decode_key(key, key_hash)
 
     def values(self):
-        sql = f"SELECT pickled_value FROM kv_index {'ORDER BY updated_at' if self.preserve_order else ''}"
+        sql = f"SELECT pickled_value FROM kv_index {'ORDER BY updated_at' if self.preserve_order else ''} {'DESC' if reverse else ''}"
 
         for row in self.__connection.execute(sql):
             if row is None:
@@ -379,27 +389,41 @@ class KVIndex:
         return False
 
     def __delitem__(self, key):
-        key_hash, _ = self.__encode_and_hash(key, return_encoded_key=False)
+        self.delete([key])
+
+    def delete(self, keys):
+        key_hashes = [self.__encode_and_hash(key)[0] for key in keys]
 
         with self.__connection as conn:
             if self.eviction.max_size_in_mb:
-                size = conn.execute(
-                    "DELETE FROM kv_index WHERE key_hash = ? RETURNING size_in_bytes",
-                    (sqlite3.Binary(key_hash),),
-                ).fetchone()
+                sizes = conn.execute(
+                    f"DELETE FROM kv_index WHERE key_hash IN ({', '.join(['?'] * len(key_hashes))}) RETURNING size_in_bytes",
+                    key_hashes,
+                ).fetchall()
 
-                if size:
+                if sizes:
                     conn.execute(
                         "UPDATE kv_index_num_metadata SET num = num - ? WHERE key = ?",
-                        (size[0] / (1024 * 1024), "current_size_in_mb"),
+                        (
+                            sum([size[0] for size in sizes]) / (1024 * 1024),
+                            "current_size_in_mb",
+                        ),
                     )
                 else:
                     raise KeyError
             else:
                 conn.execute(
-                    "DELETE FROM kv_index WHERE key_hash = ?",
-                    (sqlite3.Binary(key_hash),),
+                    f"DELETE FROM kv_index WHERE key_hash IN ({', '.join(['?'] * len(key_hashes))})",
+                    key_hashes,
                 )
+
+    def clear(self):
+        with self.__connection as conn:
+            conn.execute("DELETE FROM kv_index")
+            conn.execute(
+                "UPDATE kv_index_num_metadata SET num = 0 WHERE key = ?",
+                ("current_size_in_mb",),
+            )
 
     def __iter__(self):
         return self.keys()

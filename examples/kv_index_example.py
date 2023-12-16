@@ -178,3 +178,7 @@ assert len(kv_index_with_lfu) == 25
 # check if the 10 new items are in the index
 for i in range(10):
     assert f"new_key_{i}" in kv_index_with_lfu
+
+
+kv_index.clear()
+assert len(kv_index) == 0

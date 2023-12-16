@@ -22,7 +22,9 @@ class EvictionCfg:
     EvictAny = "any"
     EvictLRU = "lru"
     EvictLFU = "lfu"
+    EvictFIFO = "fifo"
     EvictNone = None
+
     max_size_in_mb = 0
     max_number_of_items = 0
     invalidate_after_seconds = 0
@@ -41,6 +43,7 @@ class EvictionCfg:
 
         if self.policy not in [
             EvictionCfg.EvictAny,
+            EvictionCfg.EvictFIFO,
             EvictionCfg.EvictLRU,
             EvictionCfg.EvictLFU,
             EvictionCfg.EvictNone,
@@ -61,6 +64,7 @@ class EvictionCfg:
             EvictionCfg.EvictLRU,
             EvictionCfg.EvictLFU,
             EvictionCfg.EvictAny,
+            EvictionCfg.EvictFIFO,
         }:
             if not self.max_number_of_items and not self.max_size_in_mb:
                 raise Exception(
