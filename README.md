@@ -14,10 +14,9 @@ pip install --upgrade liteindex
 - works across threads, processes seamlessly
 - compression is supported natively and optional custom compression dictionaries can be built
 
-### KVStore
-- [Documentation]() | [Detailed example]() | [Benchmarks]()
-- screaming fast reads, full multi thread process support, based on lmdb
-- can store any python objects, no querying supported
+### KVIndex
+- [Documentation](https://github.com/notAI-tech/LiteIndex/blob/main/DefinedIndex.md) | [Detailed example](https://github.com/notAI-tech/LiteIndex/blob/main/examples/defined_index_example.py) | [Benchmarks](https://github.com/notAI-tech/LiteIndex/tree/main/benchmarks/DefinedIndex)
+- simple key value store, can store any python objects, no querying supported
 - Eviction policies supported: `LRU`, `LFU`, `any` and age based invalidation
 
 ### function_cache

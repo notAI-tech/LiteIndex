@@ -1,4 +1,4 @@
-from common_utils import set_ulimit, EvictionCfg
+from .common_utils import set_ulimit, EvictionCfg
 
 set_ulimit()
 
@@ -11,8 +11,6 @@ import threading
 
 
 class KVIndex:
-    aaaa = 0
-
     def __init__(
         self,
         db_path=None,
@@ -24,9 +22,11 @@ class KVIndex:
         self.store_key = store_key
         self.eviction = eviction
         self.db_path = db_path if db_path is not None else ":memory:"
+        
         os.makedirs(
             os.path.dirname(self.db_path), exist_ok=True
-        ) if db_path is not None else None
+        ) if os.path.dirname(self.db_path) else None
+
         self.ram_cache_mb = ram_cache_mb
         self.preserve_order = preserve_order
 
@@ -148,7 +148,6 @@ class KVIndex:
                 "SELECT num FROM kv_index_num_metadata WHERE key = ?",
                 ("current_size_in_mb",),
             ).fetchone()[0]
-            self.aaaa = self.aaaa + (time.time() - s)
 
             if current_size_in_mb >= self.eviction.max_size_in_mb:
                 number_of_rows_to_evict = max(
@@ -178,17 +177,14 @@ class KVIndex:
             )
 
     def __setitem__(self, key, value):
-        key = (
-            pickle.dumps(key, protocol=pickle.HIGHEST_PROTOCOL)
-            if not isinstance(key, str)
-            else key.encode()
-        )
-        value = (
-            pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
-            if not isinstance(value, str)
-            else value.encode()
-        )
-        key_hash = hashlib.sha256(key).digest() if len(key) <= 32 else key
+        if self.store_key:
+            key_hash, key = self.__encode_and_hash(
+                key, return_encoded_key=self.store_key
+            )
+        else:
+            key_hash = self.__encode_and_hash(key, return_encoded_key=self.store_key)
+
+        value = self.__encode(value)
 
         row_size = len(key_hash) + len(value)
 
@@ -198,9 +194,11 @@ class KVIndex:
         }
 
         _time = self.__current_time()
-        if self.store_key and len(key) <= 32:
+        
+        if self.store_key and key is not None:
             row_size += len(key)
             data_to_insert["pickled_key"] = sqlite3.Binary(key)
+
         if self.preserve_order:
             data_to_insert["updated_at"] = _time
 
@@ -237,12 +235,9 @@ class KVIndex:
             )
 
     def __getitem__(self, key):
-        key = (
-            pickle.dumps(key, protocol=pickle.HIGHEST_PROTOCOL)
-            if not isinstance(key, str)
-            else key.encode()
+        key_hash, _ = self.__encode_and_hash(
+            key, return_encoded_key=False
         )
-        key_hash = hashlib.sha256(key).digest() if len(key) <= 32 else key
 
         where_clause = (
             "WHERE key_hash = ?"
@@ -277,53 +272,124 @@ class KVIndex:
         if row is None:
             raise KeyError
 
-        return pickle.loads(row[0]) if len(row[0]) > 32 else row[0].decode()
+        return self.__decode_value(row[0])
 
-    def get(self, key, default=None, return_metadata=False):
-        pass
+    def items(self):
+        if not self.store_key:
+            raise Exception("Cannot iterate over items when store_key is False")
 
-    def items(self, reverse=False):
-        sql = f"SELECT {'pickled_key' if self.store_key else 'key_hash'}, pickled_value FROM kv_index {'ORDER BY updated_at' if self.preserve_order else ''} {'DESC' if reverse else ''}"
-        with self.__connection as conn:
-            for row in conn.execute(sql):
-                yield (
-                    pickle.loads(row[0])
-                    if len(row[0]) > 32
-                    else row[0]
-                    if self.store_key
-                    else row[0],
-                    pickle.loads(row[1]),
-                )
+        sql = f"SELECT key_hash, pickled_key, pickled_value FROM kv_index {' WHERE updated_at > ?' if self.eviction.invalidate_after_seconds else ''} {'ORDER BY updated_at' if self.preserve_order else ''}"
 
+        for row in self.__connection.execute(
+            sql,
+            (self.__current_time() - self.eviction.invalidate_after_seconds)
+            if self.eviction.invalidate_after_seconds
+            else ()
+        ):
+            if row is None:
+                break
+            
+            key_hash = row[0]
+            key = row[1]
+            value = row[2]
 
-if __name__ == "__main__":
-    import tempfile
+            yield (
+                self.__decode_key(key, key_hash),
+                self.__decode_value(value)
+            )
+    
+    def keys(self):
+        if not self.store_key:
+            raise Exception("Cannot iterate over keys when store_key is False")
 
-    kv_index = KVIndex(
-        "tkv/a.db", eviction=EvictionCfg(EvictionCfg.EvictAny, max_size_in_mb=2048)
-    )
-    start = time.time()
-    for i in range(10000):
-        kv_index[i] = i
-    print("KV set", time.time() - start)
+        sql = f"SELECT key_hash, pickled_key FROM kv_index {' WHERE updated_at > ?' if self.eviction.invalidate_after_seconds else ''} {'ORDER BY updated_at' if self.preserve_order else ''}"
 
-    start = time.time()
-    for k, v in kv_index.items():
-        pass
-    print("KV get", time.time() - start)
+        for row in self.__connection.execute(
+            sql,
+            (self.__current_time() - self.eviction.invalidate_after_seconds)
+            if self.eviction.invalidate_after_seconds
+            else ()
+        ):
+            if row is None:
+                break
+            
+            key_hash = row[0]
+            key = row[1]
 
-    print(len(kv_index), kv_index.size_in_mb, kv_index.aaaa)
+            yield self.__decode_key(key, key_hash)
+    
+    def values(self):
+        sql = f"SELECT pickled_value FROM kv_index {' WHERE updated_at > ?' if self.eviction.invalidate_after_seconds else ''} {'ORDER BY updated_at' if self.preserve_order else ''}"
 
-    from diskcache import Index
+        for row in self.__connection.execute(
+            sql,
+            (self.__current_time() - self.eviction.invalidate_after_seconds)
+            if self.eviction.invalidate_after_seconds
+            else ()
+        ):
+            if row is None:
+                break
+            
+            value = row[0]
 
-    index = Index("dkv")
+            yield self.__decode_value(value)
+    
+    def __len__(self):
+        return self.__connection.execute("SELECT COUNT(*) FROM kv_index").fetchone()[0]
+    
+    def __contains__(self, key):
+        if self.__connection.execute(
+            "SELECT COUNT(*) FROM kv_index WHERE key_hash = ?",
+            (sqlite3.Binary(self.__encode_and_hash(key)[0]),),
+        ).fetchone():
+            return True
 
-    start = time.time()
-    for i in range(10000):
-        index[i] = i
-    print("DKV set", time.time() - start)
+    def get(self, key, default=None):
+        try:
+            return self[key]
+        except KeyError:
+            return default
 
-    start = time.time()
-    for k, v in index.items():
-        pass
-    print("DKV get", time.time() - start)
+    def __encode(self, x):
+        return (
+            pickle.dumps(x, protocol=pickle.HIGHEST_PROTOCOL)
+            if not isinstance(x, str)
+            else x.encode()
+        )
+
+    def __encode_and_hash(self, x, return_encoded_key=False):
+        x = self.__encode(x)
+
+        if len(x) <= 32:
+            return x, None
+        else:
+            return hashlib.sha256(x).digest(), (None if not return_encoded_key else x)
+
+    def __decode_key(self, k, k_h):
+        if k is None:
+            k = k_h
+
+        return pickle.loads(k) if k and k[0] == 128 else k.decode()
+    
+    def __decode_value(self, x):
+        return pickle.loads(x) if x and x[0] == 128 else x.decode()
+
+    def getmulti(self, keys, default=None):
+        key_hashes = [self.__encode_and_hash(key) for key in keys]
+
+        where_clause = (
+            "WHERE key_hash IN ({})".format(",".join(["?"] * len(key_hashes)))
+            if not self.eviction.invalidate_after_seconds
+            else "WHERE key_hash IN ({}) AND updated_at > ?".format(
+                ",".join(["?"] * len(key_hashes))
+            )
+        )
+
+        return [
+            self.__decode_key(row[0]) if row is not None else default
+            for row in self.__connection.execute(
+                f"SELECT pickled_value FROM kv_index {where_clause}",
+                [sqlite3.Binary(key_hash) for key_hash in key_hashes]
+                + [self.__current_time() - self.eviction.invalidate_after_seconds],
+            )
+        ]
