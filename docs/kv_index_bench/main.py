@@ -2,7 +2,7 @@ import time
 
 from liteindex import KVIndex
 from diskcache import Index 
-# from pyscript import display
+from pyscript import display
 
 kv_index = KVIndex("kv.db")
 dc_index = Index("dc", eviction_policy="none")
