@@ -39,31 +39,65 @@
 
   <!-- Initialize KVIndex -->
   <h4 id="init" class="mt-4">Initialize KVIndex</h4>
-
   <div class="code-container">
-    <textarea class="form-control" rows="2">from liteindex import KVIndex
-kv_index = KVIndex("kv.db")</textarea>
+    <textarea class="form-control" rows="4">from liteindex import KVIndex, EvictionCfg
+kv_index = KVIndex(db_path="./test.liteindex", store_key=True, preserve_order=True,
+                   ram_cache_mb=32, eviction=EvictionCfg(EvictionCfg.EvictNone))</textarea>
     <button class="btn btn-primary run-button">Run</button>
     <div class="output-container"></div>
   </div>
 
   <!-- Set value in KVIndex -->
-  <h4 id="setvalue" class="mt-4">Set a value</h4>
+  <h4 id="setvalue" class="mt-4">Set values</h4>
   <div class="code-container">
-    <textarea class="form-control" rows="3">kv_index['example_key'] = 'example_value'</textarea>
+    <textarea class="form-control" rows="3">kv_index['key1'] = 'value1'
+kv_index.update({"key2": "value2", "key3": "value3"})</textarea>
     <button class="btn btn-primary run-button">Run</button>
     <div class="output-container"></div>
   </div>
 
   <!-- Get value from KVIndex -->
-  <h4 id="getvalue" class="mt-4">Get a value</h4>
+  <h4 id="getvalue" class="mt-4">Get values</h4>
   <div class="code-container">
-    <textarea class="form-control" rows="3">value = kv_index['example_key']
-print(value)</textarea>
+    <textarea class="form-control" rows="4">get_value1 = kv_index["key1"]
+get_value2 = kv_index.get("key1", "default_value")
+multiple_values = kv_index.getvalues(["key1", "key2"])
+print(get_value1, get_value2, multiple_values)</textarea>
     <button class="btn btn-primary run-button">Run</button>
     <div class="output-container"></div>
   </div>
 
+  <!-- Delete value from KVIndex -->
+  <h4 id="deletevalue" class="mt-4">Delete values</h4>
+  <div class="code-container">
+    <textarea class="form-control" rows="3">del kv_index["key1"]
+kv_index.delete(["key2", "key3"])
+kv_index.clear()</textarea>
+    <button class="btn btn-primary run-button">Run</button>
+    <div class="output-container"></div>
+  </div>
+
+  <!-- Iteration in KVIndex -->
+  <h4 id="iterate" class="mt-4">Iterate through KVIndex</h4>
+  <div class="code-container">
+    <textarea class="form-control" rows="4">for key in kv_index: print(key)
+for key in kv_index.keys(reverse=True): print(key)
+for value in kv_index.values(reverse=True): print(value)
+for key, value in kv_index.items(reverse=True): print(key, value)</textarea>
+    <button class="btn btn-primary run-button">Run</button>
+    <div class="output-container"></div>
+  </div>
+
+  <!-- Other operations -->
+  <h4 id="otherops" class="mt-4">Other operations</h4>
+  <div class="code-container">
+    <textarea class="form-control" rows="4">len_index = len(kv_index)
+contains_key1 = "key1" in kv_index
+print("Length:", len_index)
+print("Contains 'key1':", contains_key1)</textarea>
+    <button class="btn btn-primary run-button">Run</button>
+    <div class="output-container"></div>
+  </div>
 </div>
 
 <script type="text/javascript">
@@ -85,8 +119,8 @@ print(value)</textarea>
     function initializeRunButtons() {
       document.querySelectorAll('.run-button').forEach(button => {
         button.addEventListener('click', async (event) => {
-          let codeBlock = event.target.previousElementSibling; // The textarea.
-          let outputContainer = event.target.nextElementSibling; // The output container.
+          let codeBlock = event.target.previousElementSibling;
+          let outputContainer = event.target.nextElementSibling;
   
           // Set up capturing of stdout.
           pyodide.runPython(`
@@ -106,7 +140,11 @@ print(value)</textarea>
             await window.pyodide.runPythonAsync(codeBlock.value);
             // Fetch the captured stdout output.
             let output = pyodide.runPython('sys.stdout.getvalue()');
-            outputContainer.textContent = `Output: ${output}`;
+            // if empty output set output to Success
+            if (output === '') {
+              output = 'Success';
+            }
+            outputContainer.textContent = `${output}`;
             outputContainer.style.whiteSpace = 'pre-wrap'; // Preserves formatting for multi-line output.
           } catch (error) {
             console.error(error);

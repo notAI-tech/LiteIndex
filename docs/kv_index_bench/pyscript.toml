@@ -1,2 +1,0 @@
-name = "liteIndex benchmarks"
-packages = ["liteindex", "sqlite3", "diskcache", "matplotlib"]
