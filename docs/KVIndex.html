@@ -1,88 +1,127 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-    <!-- Required meta tags -->
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-
-    <!-- Bootstrap CSS -->
-    <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" rel="stylesheet">
-    
-    <title>KVIndex Documentation</title>
-
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>KVIndex Interactive Documentation</title>
+  <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+  <script src="https://cdn.jsdelivr.net/pyodide/v0.24.1/full/pyodide.js"></script>
+  <style>
+    #loader {
+      display: none;
+      color: #000;
+      background: #fff;
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 1000;
+      padding: 10px;
+      border: 1px solid #ddd;
+    }
+    .code-container {
+      position: relative;
+    }
+    .run-button {
+      position: absolute;
+      top: 0;
+      right: 0;
+    }
+  </style>
 </head>
+
 <body>
-    <div class="container mt-4">
-        <h1 class="mb-4">KVIndex Documentation</h1>
-        <!-- KVIndex Introduction -->
-        <p>A thread-safe, process-safe key-value store that mimics Python's dict interface with ACID properties and supports various eviction policies including LRU, LFU, FIFO, and random.</p>
-        
-        <!-- Initialize section -->
-        <h2>Initialize</h2>
-        <pre><code class="python">from liteindex import KVIndex
-kv_index = KVIndex(db_path="./test.liteindex")
-</code></pre>
 
-        <h3>Parameters</h3>
-        <ul>
-            <li><strong>db_path</strong>: Path to the index file. Defaults to None, which will create an in-memory index.</li>
-            <li><strong>store_key</strong>: Defaults to True. If set to False, index can only be used for lookup.</li>
-            <li><strong>preserve_order</strong>: Defaults to True. If set to False, insert/update order is not preserved.</li>
-            <li><strong>ram_cache_mb</strong>: Size of the RAM cache in MB. Defaults to 32.</li>
-            <li><strong>eviction</strong>: Eviction policy. Defaults to EvictionCfg(EvictionCfg.EvictNone).</li>
-        </ul>
+<div class="container my-4">
+  <div id="loader">Loading Python...</div>
 
-        <!-- Insert/Update section -->
-        <h2>Insert/Update single or multiple</h2>
-        <pre><code class="python">kv_index["key1"] = "value1"
-kv_index.update({"key2": "value2", "key3": "value3"})
-</code></pre>
+  <h2>KVIndex Interactive Documentation</h2>
 
-        <!-- Get section -->
-        <h2>Get single or multiple</h2>
-        <pre><code class="python">kv_index["key1"]
-kv_index.get("key1", "default_value")
-kv_index.getvalues(["key1", "key2"])
-</code></pre>
+  <!-- Initialize KVIndex -->
+  <h4 id="init" class="mt-4">Initialize KVIndex</h4>
 
-        <!-- Delete section -->
-        <h2>Delete single or multiple, clear</h2>
-        <pre><code class="python">del kv_index["key1"]
-kv_index.delete(["key1", "key2"])
+  <div class="code-container">
+    <textarea class="form-control" rows="2">from liteindex import KVIndex
+kv_index = KVIndex("kv.db")</textarea>
+    <button class="btn btn-primary run-button">Run</button>
+    <div class="output-container"></div>
+  </div>
 
-kv_index.clear()
-</code></pre>
+  <!-- Set value in KVIndex -->
+  <h4 id="setvalue" class="mt-4">Set a value</h4>
+  <div class="code-container">
+    <textarea class="form-control" rows="3">kv_index['example_key'] = 'example_value'</textarea>
+    <button class="btn btn-primary run-button">Run</button>
+    <div class="output-container"></div>
+  </div>
 
-        <!-- Iteration section -->
-        <h2>Iteration and reverse iteration</h2>
-        <pre><code class="python">for key in kv_index: pass
+  <!-- Get value from KVIndex -->
+  <h4 id="getvalue" class="mt-4">Get a value</h4>
+  <div class="code-container">
+    <textarea class="form-control" rows="3">value = kv_index['example_key']
+print(value)</textarea>
+    <button class="btn btn-primary run-button">Run</button>
+    <div class="output-container"></div>
+  </div>
 
-for key in kv_index.keys(reverse=True): pass
-for value in kv_index.values(reverse=True): pass
-for key, value in kv_index.items(reverse=True): pass
-</code></pre>
+</div>
 
-        <!-- len, contains section -->
-        <h2>len, contains</h2>
-        <pre><code class="python">len(kv_index)
-"key1" in kv_index
-</code></pre>
+<script type="text/javascript">
+    document.getElementById("loader").style.display = "block";
+  
+    async function main() {
+      window.pyodide = await loadPyodide();
+      await pyodide.loadPackage('micropip');
+      document.getElementById("loader").innerHTML = "Preparing environment...";
+      await pyodide.runPythonAsync(`
+        import micropip
+        await micropip.install('sqlite3')
+        await micropip.install('liteindex')
+      `);
+      document.getElementById("loader").style.display = "none";
+      initializeRunButtons();
+    }
+  
+    function initializeRunButtons() {
+      document.querySelectorAll('.run-button').forEach(button => {
+        button.addEventListener('click', async (event) => {
+          let codeBlock = event.target.previousElementSibling; // The textarea.
+          let outputContainer = event.target.nextElementSibling; // The output container.
+  
+          // Set up capturing of stdout.
+          pyodide.runPython(`
+            import sys
+            import io
+            class StringWriter(io.StringIO):
+                def __init__(self):
+                    super().__init__()
+                    self.output = ''
+                def write(self, s):
+                    super().write(s)
+                    self.output += s
+            sys.stdout = StringWriter()
+          `);
+  
+          try {
+            await window.pyodide.runPythonAsync(codeBlock.value);
+            // Fetch the captured stdout output.
+            let output = pyodide.runPython('sys.stdout.getvalue()');
+            outputContainer.textContent = `Output: ${output}`;
+            outputContainer.style.whiteSpace = 'pre-wrap'; // Preserves formatting for multi-line output.
+          } catch (error) {
+            console.error(error);
+            outputContainer.textContent = `Error: ${error}`;
+            outputContainer.style.color = 'red';
+          }
+          
+          // Restore the original stdout after execution.
+          pyodide.runPython('sys.stdout = sys.__stdout__');
+        });
+      });
+    }
+  
+    main();
+  </script>
 
-        <!-- EvictionCFG section -->
-        <h2>EvictionCFG</h2>
-        <p>Configure the eviction policy using the EvictionCfg class.</p>
-        <pre><code class="python">from liteindex import EvictionCfg
-eviction_cfg = EvictionCfg(
-    eviction_policy=EvictionCfg.EvictNone, # Eviction policies: EvictNone, EvictLRU, EvictLFU, EvictAny
-    max_size_in_mb=0, # No size-based eviction
-    max_number_of_items=0, # No count-based eviction
-    invalidate_after_seconds=0, # No time-based eviction
-)
-</code></pre>
-    
-    </div>
-
-    <!-- Bootstrap Bundle with Popper -->
-    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
