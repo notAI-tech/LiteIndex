@@ -1,4 +1,5 @@
 from .common_utils import set_ulimit, EvictionCfg
+from .kv_index_utils import create_tables
 
 set_ulimit()
 
@@ -34,64 +35,13 @@ class KVIndex:
 
         self.__local_storage = threading.local()
 
-        columns_needed_and_sql_types = {
-            "key_hash": "BLOB",
-            "num_value": "NUMBER",
-            "string_value": "TEXT",
-            "pickled_value": "BLOB",
-        }
-
-        if self.store_key:
-            columns_needed_and_sql_types["pickled_key"] = "BLOB"
-        if self.preserve_order or self.eviction.invalidate_after_seconds > 0:
-            columns_needed_and_sql_types["updated_at"] = "INTEGER"
-
-        if self.eviction.policy is EvictionCfg.EvictLRU:
-            columns_needed_and_sql_types["last_accessed_time"] = "INTEGER"
-        elif self.eviction.policy is EvictionCfg.EvictLFU:
-            columns_needed_and_sql_types["access_frequency"] = "INTEGER"
-
-        if self.eviction.max_size_in_mb:
-            columns_needed_and_sql_types["size_in_bytes"] = "INTEGER"
-
         with self.__connection as conn:
-            conn.execute(
-                f"CREATE TABLE IF NOT EXISTS kv_index ({','.join([f'{col} {sql_type}' for col, sql_type in columns_needed_and_sql_types.items()])}, PRIMARY KEY (key_hash))"
+            create_tables(
+                store_key=self.store_key,
+                preserve_order=self.preserve_order,
+                eviction=self.eviction,
+                conn=conn,
             )
-
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS kv_index_num_metadata (key TEXT PRIMARY KEY, num INTEGER)"
-            )
-
-            conn.execute(
-                "INSERT OR IGNORE INTO kv_index_num_metadata (key, num) VALUES (?, ?)",
-                ("current_size_in_mb", 0),
-            )
-
-            if self.eviction.policy is EvictionCfg.EvictLRU:
-                conn.execute(
-                    "CREATE INDEX IF NOT EXISTS kv_index_last_accessed_time_idx ON kv_index(last_accessed_time)"
-                )
-
-            if self.eviction.policy is EvictionCfg.EvictLFU:
-                conn.execute(
-                    "CREATE INDEX IF NOT EXISTS kv_index_access_frequency_idx ON kv_index(access_frequency)"
-                )
-
-            if self.eviction.invalidate_after_seconds > 0:
-                conn.execute(
-                    "CREATE INDEX IF NOT EXISTS kv_index_updated_at_idx ON kv_index(updated_at)"
-                )
-
-                conn.execute(
-                    f"""
-                    CREATE TRIGGER IF NOT EXISTS kv_index_delete_old_rows
-                    BEFORE SELECT ON kv_index
-                    BEGIN
-                        DELETE FROM kv_index WHERE updated_at < {self.__current_time()} - {self.eviction.invalidate_after_seconds * 1000000};
-                    END;
-                    """
-                )
 
     @property
     def __connection(self):
@@ -115,13 +65,10 @@ class KVIndex:
         return self.__local_storage.db_conn
 
     def __current_time(self):
-        return int(time.time() * 1000000)
+        return int(time.time() * 100000)
 
-    def set(self, key, value, reverse_order=False):
-        self.__setitem__(key, value, reverse_order=reverse_order)
-
-    def __setitem__(self, key, value, reverse_order=False):
-        pass
+    def __setitem__(self, key, value):
+        self.update({key: value})
 
     def __getitem__(self, key):
         key = self.__encode_and_hash(key, return_encoded_key=False)[0]
@@ -186,51 +133,60 @@ class KVIndex:
 
         rows = {row[0]: self.__decode_value(row[1:]) for row in rows}
 
-        return (
-            [rows[key_hash] for key_hash in key_hashes]
-            if raise_key_error
-            else [rows.get(key_hash, default) for key_hash in key_hashes]
-        )
+        return [rows.get(key_hash, default) for key_hash in keys]
 
     def items(self, reverse=False):
         if not self.store_key:
             raise Exception("Cannot iterate over items when store_key is False")
 
-        sql = f"SELECT key_hash, pickled_key, pickled_value FROM kv_index {'ORDER BY updated_at' if self.preserve_order else ''} {'DESC' if reverse else ''}"
+        if not self.preserve_order and reverse:
+            raise Exception(
+                "Cannot iterate over items in reverse when preserve_order is False"
+            )
+
+        sql = f"SELECT pickled_key, num_value, string_value, pickled_value FROM kv_index {'ORDER BY updated_at' if self.preserve_order else ''} {'DESC' if reverse else ''}"
 
         for row in self.__connection.execute(sql):
             if row is None:
                 break
 
-            key_hash = row[0]
-            key = row[1]
-            value = row[2]
+            key = row[0]
+            value = row[1:]
 
-            yield (self.__decode_key(key, key_hash), self.__decode_value(value))
+            yield self.__decode_key(key, None), self.__decode_value(value)
 
     def keys(self, reverse=False):
         if not self.store_key:
-            raise Exception("Cannot iterate over keys when store_key is False")
+            raise Exception("Cannot iterate over items when store_key is False")
 
-        sql = f"SELECT key_hash, pickled_key FROM kv_index {'ORDER BY updated_at' if self.preserve_order else ''} {'DESC' if reverse else ''}"
+        if not self.preserve_order and reverse:
+            raise Exception(
+                "Cannot iterate over items in reverse when preserve_order is False"
+            )
+
+        sql = f"SELECT pickled_key FROM kv_index {'ORDER BY updated_at' if self.preserve_order else ''} {'DESC' if reverse else ''}"
 
         for row in self.__connection.execute(sql):
             if row is None:
                 break
 
-            key_hash = row[0]
-            key = row[1]
+            key = row[0]
 
-            yield self.__decode_key(key, key_hash)
+            yield self.__decode_key(key, None)
 
     def values(self, reverse=False):
-        sql = f"SELECT pickled_value FROM kv_index {'ORDER BY updated_at' if self.preserve_order else ''} {'DESC' if reverse else ''}"
+        if not self.preserve_order and reverse:
+            raise Exception(
+                "Cannot iterate over items in reverse when preserve_order is False"
+            )
+
+        sql = f"SELECT num_value, string_value, pickled_value FROM kv_index {'ORDER BY updated_at' if self.preserve_order else ''} {'DESC' if reverse else ''}"
 
         for row in self.__connection.execute(sql):
             if row is None:
                 break
 
-            value = row[0]
+            value = row
 
             yield self.__decode_value(value)
 
@@ -430,7 +386,7 @@ class KVIndex:
 
         total_new_size = 0
 
-        for key, value in items.items():
+        for key, value in items.items() if isinstance(items, dict) else items:
             key_hash, _key = self.__encode_and_hash(
                 key, return_encoded_key=self.store_key
             )
@@ -506,6 +462,13 @@ class KVIndex:
                 f"INSERT OR REPLACE INTO kv_index VALUES ({', '.join(['?'] * len(params_for_execute_many[0]))})",
                 params_for_execute_many,
             )
+
+    def math(self, key, value, op):
+        ops = {"+": "+", "-": "-", "*": "*", "/": "/", "//": "//", "%": "%", "**": "**"}
+        pass
+
+    def search(self, query, n=None):
+        pass
 
     def __run_eviction(self, conn):
         if self.eviction.policy == EvictionCfg.EvictNone:
