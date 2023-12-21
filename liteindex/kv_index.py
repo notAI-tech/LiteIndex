@@ -351,6 +351,7 @@ class KVIndex:
         elif type(x) is bool:
             value_size_in_bytes = 10
             num_value = int(x)
+            pickled_value = sqlite3.Binary(b"")
 
         elif _type in {int, float}:
             value_size_in_bytes = 10
@@ -373,7 +374,7 @@ class KVIndex:
 
     def __decode_value(self, x):
         if x[0] is not None:
-            return x[0]
+            return x[0] if x[2] is None else bool(x[0])
         elif x[1] is not None:
             return x[1]
         elif x[2] is not None:
