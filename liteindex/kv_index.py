@@ -298,16 +298,6 @@ class KVIndex:
                     for row in rows
                 ]
 
-    def popitem(self, reverse=True):
-        self.popitems(n=1, reverse=reverse)[0]
-
-    def clear(self):
-        with self.__connection as conn:
-            conn.execute("DELETE FROM kv_index")
-            conn.execute(
-                "UPDATE kv_index_num_metadata SET num = 0 WHERE key = ?",
-                ("current_size_in_mb",),
-            )
 
     def __iter__(self):
         return self.keys()
@@ -464,11 +454,25 @@ class KVIndex:
                 params_for_execute_many,
             )
 
+
+    def search_by_value(
+        self,
+        query={},
+        sort_by=None,
+        reversed_sort=False,
+        n=None,
+        page_no=None,
+    ):
+
+        query_str, params = search_query(
+            table_name="kv_index",
+            query={
+                "num"
+            }
+        )
+    
     def math(self, key, value, op):
         ops = {"+": "+", "-": "-", "*": "*", "/": "/", "//": "//", "%": "%", "**": "**"}
-        pass
-
-    def search(self, query, n=None):
         pass
 
     def __run_eviction(self, conn):
@@ -553,3 +557,14 @@ class KVIndex:
     def vaccum(self):
         with self.__connection as conn:
             conn.execute("VACUUM")
+
+    def popitem(self, reverse=True):
+        self.popitems(n=1, reverse=reverse)[0]
+
+    def clear(self):
+        with self.__connection as conn:
+            conn.execute("DELETE FROM kv_index")
+            conn.execute(
+                "UPDATE kv_index_num_metadata SET num = 0 WHERE key = ?",
+                ("current_size_in_mb",),
+            )

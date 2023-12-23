@@ -1,4 +1,4 @@
-from .common_utils import EvictionCfg
+from common_utils import EvictionCfg
 
 __policy_to_number_int_id = {
     EvictionCfg.EvictAny: 1,
@@ -95,3 +95,81 @@ def create_tables(store_key, preserve_order, eviction, conn):
         conn.execute(
             "CREATE INDEX IF NOT EXISTS kv_index_updated_at_idx ON kv_index(updated_at)"
         )
+
+import pickle
+
+def create_where_clause(query):
+    clauses = []
+    params=[]
+    
+    for key, value in query.items():
+        if key == '$eq':
+            column = 'num_value'
+            clauses.append(f"{column} = ?")
+            params.append(value)
+        elif key == '$gt':
+            clauses.append(f"num_value > ?")
+            params.append(value)
+        elif key == '$gte':
+            clauses.append(f"num_value >= ?")
+            params.append(value)
+        elif key == '$lt':
+            clauses.append(f"num_value < ?")
+            params.append(value)
+        elif key == '$lte':
+            clauses.append(f"num_value <= ?")
+            params.append(value)
+        elif key == '$neq':
+            column = 'num_value'
+            clauses.append(f"{column} != ?")
+            params.append(value)
+        elif key == '$in':
+            column = 'string_value'  # Assuming all in/nin operations are for string_value
+            placeholders = ', '.join(['?'] * len(value))
+            clauses.append(f"{column} IN ({placeholders})")
+            params.extend(value)
+        elif key == '$nin':
+            column = 'string_value'
+            placeholders = ', '.join(['?'] * len(value))
+            clauses.append(f"{column} NOT IN ({placeholders})")
+            params.extend(value)
+        elif key == '$startswith':
+            clauses.append(f"string_value LIKE ?")
+            params.append(value + '%')
+        elif key == '$endswith':
+            clauses.append(f"string_value LIKE ?")
+            params.append('%' + value)
+        elif key == '$or' or key == '$and':
+            sub_clauses, new_params = create_where_clause_combined(value, key.replace('$', '').upper(), [])
+            combined_clause = f" {key.replace('$', ' ').upper().strip()} ".join(sub_clauses)
+            clauses.append(f"({combined_clause})")
+            params.extend(new_params)
+    return ' AND '.join(clauses), params
+
+# Function to handle '$or' and '$and' by creating sub-clauses
+def create_where_clause_combined(queries, combinator, params):
+    sub_clauses = []
+    param_list = []
+    for subquery in queries:
+        clause, new_params = create_where_clause(subquery, [])
+        sub_clauses.append(clause)
+        param_list.extend(new_params)
+    return sub_clauses, param_list
+
+
+if __name__ == "__main__":
+    print(create_where_clause({'$eq': 1}))
+    print(create_where_clause({'$gt': 1}))
+    print(create_where_clause({'$gte': 1}))
+    print(create_where_clause({'$lt': 1}))
+    print(create_where_clause({'$lte': 1}))
+    print(create_where_clause({'$neq': 1}))
+    print(create_where_clause({'$in': [1, 2, 3]}))
+    print(create_where_clause({'$nin': [1, 2, 3]}))
+    print(create_where_clause({'$startswith': 'abc'}))
+    print(create_where_clause({'$endswith': 'abc'}))
+    print(create_where_clause({'$or': [{'$eq': 1}, {'$eq': 2}]}))
+    print(create_where_clause({'$and': [{'$eq': 1}, {'$eq': 2}]}))
+
+    # and (a or b) and (c or d)
+    print(create_where_clause({'$and': [{'$or': [{'$eq': 1}, {'$eq': 2}]}, {'$or': [{'$eq': 3}, {'$eq': 4}]}]}))
