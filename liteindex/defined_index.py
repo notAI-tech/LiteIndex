@@ -320,7 +320,10 @@ class DefinedIndex:
         select_keys=[],
         update=None,
     ):
-        if self.schema[sort_by] in {"blob", "other"}:
+        if not sort_by:
+            sort_by = "updated_at"
+
+        elif self.schema[sort_by] in {"blob", "other"}:
             sort_by = f"__size_{sort_by}"
 
         if not select_keys:
@@ -330,7 +333,7 @@ class DefinedIndex:
             table_name=self.name,
             query=query,
             schema=self.schema,
-            sort_by=sort_by if sort_by is not None else "updated_at",
+            sort_by=sort_by,
             reversed_sort=reversed_sort,
             n=n,
             page=page_no,
