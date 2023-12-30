@@ -144,16 +144,13 @@ class KVIndex:
                 "Cannot iterate over items in reverse when preserve_order is False"
             )
 
-        sql = f"SELECT pickled_key, num_value, string_value, pickled_value FROM kv_index {'ORDER BY updated_at' if self.preserve_order else ''} {'DESC' if reverse else ''}"
+        sql = f"SELECT key_hash, pickled_key, num_value, string_value, pickled_value FROM kv_index {'ORDER BY updated_at' if self.preserve_order else ''} {'DESC' if reverse else ''}"
 
         for row in self.__connection.execute(sql):
             if row is None:
                 break
 
-            key = row[0]
-            value = row[1:]
-
-            yield self.__decode_key(key, None), self.__decode_value(value)
+            yield self.__decode_key(row[1], row[0]), self.__decode_value(row[2:])
 
     def keys(self, reverse=False):
         if not self.store_key:
@@ -164,15 +161,13 @@ class KVIndex:
                 "Cannot iterate over items in reverse when preserve_order is False"
             )
 
-        sql = f"SELECT pickled_key FROM kv_index {'ORDER BY updated_at' if self.preserve_order else ''} {'DESC' if reverse else ''}"
+        sql = f"SELECT key_hash, pickled_key FROM kv_index {'ORDER BY updated_at' if self.preserve_order else ''} {'DESC' if reverse else ''}"
 
         for row in self.__connection.execute(sql):
             if row is None:
                 break
 
-            key = row[0]
-
-            yield self.__decode_key(key, None)
+            yield self.__decode_key(row[1], row[0])
 
     def values(self, reverse=False):
         if not self.preserve_order and reverse:
@@ -326,7 +321,13 @@ class KVIndex:
         if k is None:
             k = k_h
 
-        return pickle.loads(k) if k and k[0] == 128 else k.decode()
+        return (
+            pickle.loads(k)
+            if k and k[0] == 128
+            else k.decode()
+            if k is not None
+            else None
+        )
 
     def __encode_value(self, x):
         num_value, string_value, pickled_value = None, None, None
