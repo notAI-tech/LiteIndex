@@ -1,4 +1,10 @@
 import json
+import pickle
+
+try:
+    from .defined_serializers import hash_bytes
+except ImportError:
+    from defined_serializers import hash_bytes
 
 
 def parse_query(query, schema, prefix=None):
@@ -68,6 +74,22 @@ def parse_query(query, schema, prefix=None):
         elif value is None:
             where_conditions.append(f"{column} IS NULL")
         else:
+            if schema[column] == "other":
+                column = f"__hash_{column}"
+                value = pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
+                value = hash_bytes(value)
+            elif schema[column] == "blob":
+                column = f"__hash_{column}"
+                value = hash_bytes(value)
+            elif schema[column] == "datetime":
+                value = value.timestamp()
+            elif schema[column] == "boolean":
+                value = int(value)
+            elif schema[column] == "compressed_string":
+                value = value.encode()
+                # TODO: Handle compressed strings
+                pass
+
             where_conditions.append(f"{column} = ?")
             params.append(value)
 
@@ -339,12 +361,27 @@ if __name__ == "__main__":
                 "tags_list": "json",
                 "tag_id_to_name": "json",
                 "is_true": "boolean",
+                "profile_picture": "blob",
             }
 
         def test_single_condition(self):
             query, params = search_query("users", {"age": 25}, self.schema)
             self.assertEqual(query, "SELECT * FROM users WHERE age = ?")
             self.assertEqual(params, [25])
+
+        def test_boolean_condition(self):
+            query, params = search_query("users", {"is_true": True}, self.schema)
+            self.assertEqual(query, "SELECT * FROM users WHERE is_true = ?")
+            self.assertEqual(params, [1])
+
+        def test_blob_condition(self):
+            query, params = search_query(
+                "users", {"profile_picture": b"abc"}, self.schema
+            )
+            self.assertEqual(
+                query, "SELECT * FROM users WHERE __hash_profile_picture = ?"
+            )
+            self.assertEqual(params, [hash_bytes(b"abc")])
 
         def test_multiple_conditions(self):
             query, params = search_query(

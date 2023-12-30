@@ -97,29 +97,30 @@ def create_tables(store_key, preserve_order, eviction, conn):
         )
 
 
-
 import pickle
 
 
 def serialize(value):
     return sqlite3.Binary(pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL))
 
+
 def get_column_by_value(value):
     if isinstance(value, (int, float)):
-        return 'num_value'
+        return "num_value"
     elif isinstance(value, str):
-        return 'string_value'
+        return "string_value"
     else:
-        return 'pickled_value'
+        return "pickled_value"
+
 
 def handle_like(operator, value):
     # This only applies to strings
-    column = 'string_value'
-    if operator == '$startswith':
+    column = "string_value"
+    if operator == "$startswith":
         value = f"{value}%"
-    elif operator == '$endswith':
+    elif operator == "$endswith":
         value = f"%{value}"
-    elif operator == '$like':
+    elif operator == "$like":
         # The value in this case should already have % or _ for the LIKE pattern
         value = value
     else:
@@ -127,38 +128,41 @@ def handle_like(operator, value):
 
     return f"{column} LIKE ?", (value,)
 
+
 def handle_comparison(operator, value):
     column = get_column_by_value(value)
 
     operators_map = {
-        '$eq': '=',
-        '$ne': '!=',
-        '$gt': '>',
-        '$lt': '<',
-        '$gte': '>=',
-        '$lte': '<=',
+        "$eq": "=",
+        "$ne": "!=",
+        "$gt": ">",
+        "$lt": "<",
+        "$gte": ">=",
+        "$lte": "<=",
     }
 
     sql_operator = operators_map.get(operator)
     if sql_operator is None:
         raise ValueError(f"Unknown comparison operator: {operator}")
 
-    if column == 'pickled_value':
+    if column == "pickled_value":
         # Using parameterized queries to prevent injection
         return f"{column} {sql_operator} ?", (serialize(value),)
     else:
         return f"{column} {sql_operator} ?", (value,)
 
+
 def handle_in_operator(value, operator):
     column = get_column_by_value(value[0])
 
-    placeholders = ', '.join(['?'] * len(value))
-    if column == 'pickled_value':
+    placeholders = ", ".join(["?"] * len(value))
+    if column == "pickled_value":
         value = list(map(serialize, value))
 
-    operator = 'IN' if operator == '$in' else 'NOT IN'
+    operator = "IN" if operator == "$in" else "NOT IN"
     sql = f"{column} {operator} ({placeholders})"
     return sql, tuple(value)
+
 
 def handle_logical(operator, values):
     clauses = []
