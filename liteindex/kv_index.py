@@ -298,7 +298,6 @@ class KVIndex:
                     for row in rows
                 ]
 
-
     def __iter__(self):
         return self.keys()
 
@@ -454,7 +453,6 @@ class KVIndex:
                 params_for_execute_many,
             )
 
-
     def search_by_value(
         self,
         query={},
@@ -463,14 +461,8 @@ class KVIndex:
         n=None,
         page_no=None,
     ):
+        query_str, params = search_query(table_name="kv_index", query={"num"})
 
-        query_str, params = search_query(
-            table_name="kv_index",
-            query={
-                "num"
-            }
-        )
-    
     def math(self, key, value, op):
         ops = {"+": "+", "-": "-", "*": "*", "/": "/", "//": "//", "%": "%", "**": "**"}
         pass

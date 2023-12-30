@@ -1,4 +1,4 @@
-from common_utils import EvictionCfg
+from .common_utils import EvictionCfg
 
 __policy_to_number_int_id = {
     EvictionCfg.EvictAny: 1,
@@ -97,8 +97,9 @@ def create_tables(store_key, preserve_order, eviction, conn):
         )
 
 
+
 import pickle
-import sqlite3
+
 
 def serialize(value):
     return sqlite3.Binary(pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL))
@@ -161,163 +162,92 @@ def handle_in_operator(value, operator):
 
 def handle_logical(operator, values):
     clauses = []
-    params = ()
+    params = []
 
-    sub_operators = {
-        '$and': 'AND',
-        '$or': 'OR',
-        '$not': 'NOT',
-    }
+    for key, value in query.items():
+        if key == "$eq":
+            column = "num_value"
+            clauses.append(f"{column} = ?")
+            params.append(value)
+        elif key == "$gt":
+            clauses.append(f"num_value > ?")
+            params.append(value)
+        elif key == "$gte":
+            clauses.append(f"num_value >= ?")
+            params.append(value)
+        elif key == "$lt":
+            clauses.append(f"num_value < ?")
+            params.append(value)
+        elif key == "$lte":
+            clauses.append(f"num_value <= ?")
+            params.append(value)
+        elif key == "$neq":
+            column = "num_value"
+            clauses.append(f"{column} != ?")
+            params.append(value)
+        elif key == "$in":
+            column = (
+                "string_value"  # Assuming all in/nin operations are for string_value
+            )
+            placeholders = ", ".join(["?"] * len(value))
+            clauses.append(f"{column} IN ({placeholders})")
+            params.extend(value)
+        elif key == "$nin":
+            column = "string_value"
+            placeholders = ", ".join(["?"] * len(value))
+            clauses.append(f"{column} NOT IN ({placeholders})")
+            params.extend(value)
+        elif key == "$startswith":
+            clauses.append(f"string_value LIKE ?")
+            params.append(value + "%")
+        elif key == "$endswith":
+            clauses.append(f"string_value LIKE ?")
+            params.append("%" + value)
+        elif key == "$or" or key == "$and":
+            sub_clauses, new_params = create_where_clause_combined(
+                value, key.replace("$", "").upper(), []
+            )
+            combined_clause = f" {key.replace('$', ' ').upper().strip()} ".join(
+                sub_clauses
+            )
+            clauses.append(f"({combined_clause})")
+            params.extend(new_params)
+    return " AND ".join(clauses), params
 
-    logical_operator = sub_operators.get(operator)
-    if logical_operator is None:
-        raise ValueError(f"Unknown logical operator: {operator}")
 
-    if operator == '$not' and isinstance(values, list):
-        raise ValueError("$not operator expects a single subcondition, received a list")
+# Function to handle '$or' and '$and' by creating sub-clauses
+def create_where_clause_combined(queries, combinator, params):
+    sub_clauses = []
+    param_list = []
+    for subquery in queries:
+        clause, new_params = create_where_clause(subquery, [])
+        sub_clauses.append(clause)
+        param_list.extend(new_params)
+    return sub_clauses, param_list
 
-    subqueries = [values] if logical_operator == 'NOT' else values
-
-    for sub_query in subqueries:
-        for sub_key, sub_value in sub_query.items():
-            if sub_key in sub_operators:
-                sub_clause, sub_params = handle_logical(sub_key, sub_value)
-            else:
-                sub_clause, sub_params = handle_comparison(sub_key, sub_value)
-            clauses.append(sub_clause)
-            params += sub_params
-
-    combined_clauses = f" {logical_operator} ".join(f"({clause})" for clause in clauses)
-    return combined_clauses, params
-
-def parse_query(query):
-    if not isinstance(query, dict):
-        raise ValueError("Query must be a dictionary")
-
-    sql, params = '', ()
-
-    for operator, value in query.items():
-        if operator in ['$and', '$or', '$not']:
-            sub_sql, sub_params = handle_logical(operator, value)
-            sql = f"({sub_sql})" if sql else sub_sql
-            params += sub_params
-        elif operator in ['$eq', '$ne', '$gt', '$lt', '$gte', '$lte']:
-            sql, param = handle_comparison(operator, value)
-            params += param
-        elif operator in ['$like', '$startswith', '$endswith']:
-            sql, param = handle_like(operator, value)
-            params += param
-        elif operator in ['$in', '$nin']:
-            sub_sql, sub_param = handle_in_operator(value, operator)
-            sql = f"{sql} AND {sub_sql}" if sql else sub_sql
-            params += sub_param
-        else:
-            raise ValueError(f"Unknown operator: {operator}")
-        sql = f"({sql})" if sql else sql
-
-    return sql, params
 
 if __name__ == "__main__":
-    import unittest
+    print(create_where_clause({"$eq": 1}))
+    print(create_where_clause({"$gt": 1}))
+    print(create_where_clause({"$gte": 1}))
+    print(create_where_clause({"$lt": 1}))
+    print(create_where_clause({"$lte": 1}))
+    print(create_where_clause({"$neq": 1}))
+    print(create_where_clause({"$in": [1, 2, 3]}))
+    print(create_where_clause({"$nin": [1, 2, 3]}))
+    print(create_where_clause({"$startswith": "abc"}))
+    print(create_where_clause({"$endswith": "abc"}))
+    print(create_where_clause({"$or": [{"$eq": 1}, {"$eq": 2}]}))
+    print(create_where_clause({"$and": [{"$eq": 1}, {"$eq": 2}]}))
 
-    class TestQueryParser(unittest.TestCase):
-        
-        def test_eq_num(self):
-            query = {'$eq': 5}
-            expected_sql = 'num_value = ?'
-            expected_params = (5,)
-            sql, params = parse_query(query)
-            self.assertEqual(sql, expected_sql)
-            self.assertEqual(params, expected_params)
-        
-        def test_eq_string(self):
-            query = {'$eq': 'apple'}
-            expected_sql = 'string_value = ?'
-            expected_params = ('apple',)
-            sql, params = parse_query(query)
-            self.assertEqual(sql, expected_sql)
-            self.assertEqual(params, expected_params)
-
-        def test_eq_pickle(self):
-            query = {'$eq': [1, 2, 3]}
-            expected_sql = 'pickled_value = ?'
-            expected_params = (serialize([1, 2, 3]),)
-            sql, params = parse_query(query)
-            self.assertEqual(sql, expected_sql)
-            self.assertEqual(params, expected_params)
-
-        def test_gt(self):
-            query = {'$gt': 10}
-            expected_sql = 'num_value > ?'
-            expected_params = (10,)
-            sql, params = parse_query(query)
-            self.assertEqual(sql, expected_sql)
-            self.assertEqual(params, expected_params)
-
-        def test_in(self):
-            query = {'$in': [1, 2, 3]}
-            expected_sql = 'num_value IN (?,?,?)'
-            expected_params = (1, 2, 3)
-            sql, params = parse_query(query)
-            self.assertEqual(sql, expected_sql)
-            self.assertEqual(params, expected_params)
-
-        def test_nin(self):
-            query = {'$nin': ['apple', 'banana']}
-            expected_sql = 'string_value NOT IN (?,?)'
-            expected_params = ('apple', 'banana')
-            sql, params = parse_query(query)
-            self.assertEqual(sql, expected_sql)
-            self.assertEqual(params, expected_params)
-
-        def test_like(self):
-            query = {'$like': '%test%'}
-            expected_sql = 'string_value LIKE ?'
-            expected_params = ('%test%',)
-            sql, params = parse_query(query)
-            self.assertEqual(sql, expected_sql)
-            self.assertEqual(params, expected_params)
-
-        def test_startswith(self):
-            query = {'$startswith': 'test'}
-            expected_sql = 'string_value LIKE ?'
-            expected_params = ('test%',)
-            sql, params = parse_query(query)
-            self.assertEqual(sql, expected_sql)
-            self.assertEqual(params, expected_params)
-
-        def test_endswith(self):
-            query = {'$endswith': 'test'}
-            expected_sql = 'string_value LIKE ?'
-            expected_params = ('%test',)
-            sql, params = parse_query(query)
-            self.assertEqual(sql, expected_sql)
-            self.assertEqual(params, expected_params)
-        
-        def test_or(self):
-            query = {'$or': [{'$eq': 5}, {'$eq': 'apple'}]}
-            expected_sql = '(num_value = ? OR string_value = ?)'
-            expected_params = (5, 'apple')
-            sql, params = parse_query(query)
-            self.assertEqual(sql, expected_sql)
-            self.assertEqual(params, expected_params)
-        
-        def test_and(self):
-            query = {'$and': [{'$gt': 5}, {'$lt': 10}]}
-            expected_sql = '(num_value > ? AND num_value < ?)'
-            expected_params = (5, 10)
-            sql, params = parse_query(query)
-            print('-->', sql, '||', params)
-            self.assertEqual(sql, expected_sql)
-            self.assertEqual(params, expected_params)
-
-        def test_not(self):
-            query = {'$not': {'$eq': 5}}
-            expected_sql = 'NOT (num_value = ?)'
-            expected_params = (5,)
-            sql, params = parse_query(query)
-            self.assertEqual(sql, expected_sql)
-            self.assertEqual(params, expected_params)
-    
-    unittest.main()
-
+    # and (a or b) and (c or d)
+    print(
+        create_where_clause(
+            {
+                "$and": [
+                    {"$or": [{"$eq": 1}, {"$eq": 2}]},
+                    {"$or": [{"$eq": 3}, {"$eq": 4}]},
+                ]
+            }
+        )
+    )

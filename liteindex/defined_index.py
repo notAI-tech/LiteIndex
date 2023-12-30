@@ -67,12 +67,7 @@ class DefinedIndex:
             raise ValueError("Index name cannot start with '__'")
 
         self.__meta_table_name = f"__{self.name}_meta"
-
-        self.__hashed_key_schema = {}
-        self.__key_hash_to_original_key = {}
-        self.__original_key_to_key_hash = {}
-
-        self.__column_names = []
+        self.__column_names = ["id", "updated_at"]
 
         self.__local_storage = threading.local()
 
@@ -158,19 +153,15 @@ class DefinedIndex:
         if self.schema is None:
             self.schema = {}
 
-            for _hash, pickled, value_type in rows:
-                self.__key_hash_to_original_key[_hash] = pickle.loads(pickled)
-                self.__original_key_to_key_hash[pickle.loads(pickled)] = _hash
-                self.schema[pickle.loads(pickled)] = value_type
+            for key, value_type in rows:
+                self.schema[key] = value_type
         else:
-            for _hash, pickled, value_type in rows:
-                if pickle.loads(pickled) not in self.schema:
+            for key, value_type in rows:
+                if key not in self.schema:
+                    raise ValueError(f"Schema mismatch: {key} not found in schema")
+                if self.schema[key] != value_type:
                     raise ValueError(
-                        f"Schema mismatch: {pickle.loads(pickled)} not found in schema"
-                    )
-                if self.schema[pickle.loads(pickled)] != value_type:
-                    raise ValueError(
-                        f"Schema mismatch: {pickle.loads(pickled)} has type {value_type} but {self.schema[pickle.loads(pickled)]} was expected"
+                        f"Schema mismatch: {key} has type {value_type} but {self.schema[key]} was expected"
                     )
 
             if len(self.schema) != len(rows):
@@ -180,36 +171,26 @@ class DefinedIndex:
         for _i, (key, value_type) in enumerate(self.schema.items()):
             if value_type not in defined_serializers.schema_property_to_column_type:
                 raise ValueError(f"Invalid schema property: {value_type}")
-            key_hash = f"col_{_i}"
-            self.__key_hash_to_original_key[key_hash] = key
-            self.__original_key_to_key_hash[key] = key_hash
-            self.__hashed_key_schema[key_hash] = value_type
 
     def __create_table_and_meta_table(self):
         columns = []
         meta_columns = []
 
         for key, value_type in self.schema.items():
-            key_hash = self.__original_key_to_key_hash[key]
             sql_column_type = defined_serializers.schema_property_to_column_type[
                 value_type
             ]
+
             if value_type in {"blob", "other"}:
-                columns.append(f'"__size_{key_hash}" NUMBER')
-                self.__column_names.append(f"__size_{key_hash}")
-                columns.append(f'"__hash_{key_hash}" TEXT')
-                self.__column_names.append(f"__hash_{key_hash}")
+                columns.append(f'"__size_{key}" NUMBER')
+                self.__column_names.append(f"__size_{key}")
+                columns.append(f'"__hash_{key}" TEXT')
+                self.__column_names.append(f"__hash_{key}")
 
-            columns.append(f'"{key_hash}" {sql_column_type}')
-            self.__column_names.append(key_hash)
+            columns.append(f'"{key}" {sql_column_type}')
+            self.__column_names.append(key)
 
-            meta_columns.append(
-                (
-                    key_hash,
-                    pickle.dumps(key, protocol=pickle.HIGHEST_PROTOCOL),
-                    value_type,
-                )
-            )
+            meta_columns.append((key, value_type))
 
         columns_str = ", ".join(columns)
 
@@ -224,85 +205,64 @@ class DefinedIndex:
 
             self.__connection.execute(
                 f"CREATE TABLE IF NOT EXISTS {self.__meta_table_name} "
-                "(hash TEXT PRIMARY KEY, pickled BLOB, value_type TEXT)"
+                "(key TEXT PRIMARY KEY, value_type TEXT)"
             )
 
             self.__connection.executemany(
-                f"INSERT OR IGNORE INTO {self.__meta_table_name} (hash, pickled, value_type) "
-                f"VALUES (?, ?, ?)",
-                [
-                    (hash_val, sqlite3.Binary(pickled), value_type)
-                    for hash_val, pickled, value_type in meta_columns
-                ],
+                f"INSERT OR IGNORE INTO {self.__meta_table_name} (key, value_type) "
+                f"VALUES (?, ?)",
+                [(key, value_type) for key, value_type in meta_columns],
             )
 
     def update(self, data):
-        ids_grouped_by_common_key_hashes = {}
+        ids_grouped_by_common_keys = {}
 
-        for i, _id in enumerate(data.keys()):
-            ordered_key_hashes = tuple(
-                key_hash
-                for key, key_hash in self.__original_key_to_key_hash.items()
-                if key in data[_id]
+        for _id, _data in data.items():
+            data[_id] = defined_serializers.serialize_record(
+                self.schema, data[_id], self.__compressor, _id, time.time()
             )
 
-            if ordered_key_hashes not in ids_grouped_by_common_key_hashes:
-                ids_grouped_by_common_key_hashes[ordered_key_hashes] = []
+            keys_in_current_data = tuple(data[_id].keys())
 
-            ids_grouped_by_common_key_hashes[ordered_key_hashes].append(_id)
+            if keys_in_current_data not in ids_grouped_by_common_keys:
+                ids_grouped_by_common_keys[keys_in_current_data] = [_id]
+            else:
+                ids_grouped_by_common_keys[keys_in_current_data].append(_id)
 
         with self.__connection:
             updated_at = time.time()
 
             for (
-                ordered_key_hashes,
+                keys_in_current_data,
                 ids_group,
-            ) in ids_grouped_by_common_key_hashes.items():
-                transactions = []
-
-                all_columns = ("id", "updated_at") + ordered_key_hashes
-
-                columns = ", ".join([f'"{h}"' for h in all_columns])
-                values = ", ".join(["?" for _ in range(len(all_columns))])
+            ) in ids_grouped_by_common_keys.items():
+                columns = ", ".join([f'"{h}"' for h in keys_in_current_data])
+                values = ", ".join(["?" for _ in range(len(keys_in_current_data))])
                 updates = ", ".join(
-                    [f'"{f}" = excluded."{f}"' for f in all_columns if f != "id"]
+                    [
+                        f'"{f}" = excluded."{f}"'
+                        for f in keys_in_current_data
+                        if f != "id"
+                    ]
                 )
 
                 sql = f"INSERT INTO {self.name} ({columns}) VALUES ({values}) ON CONFLICT(id) DO UPDATE SET {updates}"
 
-                for _id in ids_group:
-                    data[_id] = defined_serializers.serialize_record(
-                        self.__original_key_to_key_hash,
-                        self.schema,
-                        data[_id],
-                        self.__compressor,
-                    )
+                def yield_transaction():
+                    for _id in ids_group:
+                        yield tuple(data[_id].values())
 
-                    data[_id]["id"] = _id
-                    data[_id]["updated_at"] = updated_at
-
-                    transactions.append([data[_id][key] for key in all_columns])
-
-                self.__connection.executemany(sql, transactions)
+                self.__connection.executemany(sql, yield_transaction())
 
     def get(self, ids, select_keys=None, update=None):
         if isinstance(ids, str):
             ids = [ids]
 
-        if not select_keys:
-            select_keys_hashes = list(self.__original_key_to_key_hash.values())
-        else:
-            if [k for k in select_keys if k not in self.__original_key_to_key_hash]:
-                raise ValueError(
-                    f"Invalid select_keys: {[k for k in select_keys if k not in self.__original_key_to_key_hash]}"
-                )
-
-            select_keys_hashes = [
-                self.__original_key_to_key_hash[k] for k in select_keys
-            ]
+        if select_keys is None:
+            select_keys = list(self.schema)
 
         # Prepare the SQL command
-        columns = ", ".join([f'"{h}"' for h in select_keys_hashes])
+        columns = ", ".join([f'"{h}"' for h in select_keys])
         column_str = "id, " + columns  # Update this to include `id`
 
         # Format the ids for the where clause
@@ -310,12 +270,12 @@ class DefinedIndex:
 
         if update:
             update = defined_serializers.serialize_record(
-                self.__original_key_to_key_hash, self.schema, update, self.__compressor
+                self.schema, update, self.__compressor
             )
 
             update_columns = ", ".join([f'"{h}" = ?' for h in update.keys()])
 
-            sql_query = f"UPDATE {self.name} SET {update_columns} WHERE id IN ({id_placeholders}) RETURNING {', '.join(['id'] + select_keys_hashes)}"
+            sql_query = f"UPDATE {self.name} SET {update_columns} WHERE id IN ({id_placeholders}) RETURNING {', '.join(['id'] + select_keys)}"
 
             sql_params = [_ for _ in update.values()] + ids
 
@@ -331,9 +291,8 @@ class DefinedIndex:
         result = {}
         for row in _result:
             result[row[0]] = defined_serializers.deserialize_record(
-                self.__key_hash_to_original_key,
-                self.__hashed_key_schema,
-                {h: val for h, val in zip(select_keys_hashes, row[1:])},
+                self.schema,
+                {h: val for h, val in zip(select_keys, row[1:])},
                 self.__decompressor,
             )
 
@@ -361,55 +320,22 @@ class DefinedIndex:
         select_keys=[],
         update=None,
     ):
-        if sort_by:
-            if sort_by not in self.schema or self.schema[sort_by] in {
-                "json",
-            }:
-                raise ValueError("Invalid sort_by")
-
-            elif self.schema[sort_by] in {"blob", "other"}:
-                sort_by = f"__size_{self.__original_key_to_key_hash[sort_by]}"
-            else:
-                sort_by = self.__original_key_to_key_hash[sort_by]
+        if self.schema[sort_by] in {"blob", "other"}:
+            sort_by = f"__size_{sort_by}"
 
         if not select_keys:
-            select_keys = list(self.__original_key_to_key_hash)
-
-        select_keys_hashes = [self.__original_key_to_key_hash[k] for k in select_keys]
-
-        _query = {}
-        for k, v in query.items():
-            if k not in self.schema:
-                raise ValueError(f"Invalid query: {k} is not a valid key")
-            if self.schema[k] == "other":
-                _query[
-                    f"__hash_{self.__original_key_to_key_hash[k]}"
-                ] = defined_serializers.hash_bytes(
-                    pickle.dumps(v, protocol=pickle.HIGHEST_PROTOCOL)
-                )
-            elif self.schema[k] == "blob":
-                _query[
-                    f"__hash_{self.__original_key_to_key_hash[k]}"
-                ] = defined_serializers.hash_bytes(v)
-            elif self.schema[k] == "compressed_string":
-                _query[self.__original_key_to_key_hash[k]] = sqlite3.Binary(
-                    self.__compressor.compress(v.encode())
-                    if self.__compressor is not False
-                    else v.encode()
-                )
-            else:
-                _query[self.__original_key_to_key_hash[k]] = v
+            select_keys = tuple(self.schema)
 
         sql_query, sql_params = search_query(
             table_name=self.name,
-            query=_query,
-            schema=self.__hashed_key_schema,
+            query=query,
+            schema=self.schema,
             sort_by=sort_by if sort_by is not None else "updated_at",
             reversed_sort=reversed_sort,
             n=n,
             page=page_no,
             page_size=n if page_no else None,
-            select_columns=(["id", "updated_at"] + select_keys_hashes)
+            select_columns=(("id", "updated_at") + select_keys)
             if not update
             else ["id"],
         )
@@ -418,12 +344,12 @@ class DefinedIndex:
 
         if update:
             update = defined_serializers.serialize_record(
-                self.__original_key_to_key_hash, self.schema, update, self.__compressor
+                self.schema, update, self.__compressor
             )
 
             update_columns = ", ".join([f'"{h}" = ?' for h in update.keys()])
 
-            sql_query = f"UPDATE {self.name} SET {update_columns} WHERE id IN ({sql_query}) RETURNING {', '.join(['id', 'updated_at'] + select_keys_hashes)}"
+            sql_query = f"UPDATE {self.name} SET {update_columns} WHERE id IN ({sql_query}) RETURNING {', '.join(['id', 'updated_at'] + select_keys)}"
 
             sql_params = [_ for _ in update.values()] + sql_params
 
@@ -439,9 +365,8 @@ class DefinedIndex:
         for result in _results:
             _id, updated_at = result[:2]
             results[_id] = defined_serializers.deserialize_record(
-                self.__key_hash_to_original_key,
-                self.__hashed_key_schema,
-                {h: val for h, val in zip(select_keys_hashes, result[2:])},
+                self.schema,
+                {h: val for h, val in zip(select_keys, result[2:])},
                 self.__decompressor,
             )
 
@@ -450,9 +375,9 @@ class DefinedIndex:
     def distinct(self, key, query={}):
         sql_query, sql_params = distinct_query(
             table_name=self.name,
-            column=self.__original_key_to_key_hash[key],
-            query={self.__original_key_to_key_hash[k]: v for k, v in query.items()},
-            schema=self.__hashed_key_schema,
+            column=key,
+            query={k: v for k, v in query.items()},
+            schema=self.schema,
         )
 
         return {
@@ -465,9 +390,9 @@ class DefinedIndex:
 
         sql_query, sql_params = group_by_query(
             table_name=self.name,
-            columns=[self.__original_key_to_key_hash[key] for key in keys],
-            query={self.__original_key_to_key_hash[k]: v for k, v in query.items()},
-            schema=self.__hashed_key_schema,
+            columns=[key for key in keys],
+            query={k: v for k, v in query.items()},
+            schema=self.schema,
         )
 
         return {
@@ -480,12 +405,11 @@ class DefinedIndex:
             with self.__connection:
                 return {
                     row[0]: defined_serializers.deserialize_record(
-                        self.__key_hash_to_original_key,
-                        self.__hashed_key_schema,
+                        self.schema,
                         {
                             h: val
                             for h, val in zip(self.__column_names, row[2:])
-                            if h in self.__key_hash_to_original_key
+                            if h in self.schema
                         },
                         self.__decompressor,
                     )
@@ -498,8 +422,8 @@ class DefinedIndex:
         elif query is not None:
             sql_query, sql_params = pop_query(
                 table_name=self.name,
-                query={self.__original_key_to_key_hash[k]: v for k, v in query.items()},
-                schema=self.__hashed_key_schema,
+                query={k: v for k, v in query.items()},
+                schema=self.schema,
                 sort_by=sort_by if sort_by is not None else "updated_at",
                 reversed_sort=reversed_sort,
                 n=n,
@@ -508,12 +432,11 @@ class DefinedIndex:
             with self.__connection:
                 return {
                     row[0]: defined_serializers.deserialize_record(
-                        self.__key_hash_to_original_key,
-                        self.__hashed_key_schema,
+                        self.schema,
                         {
                             h: val
                             for h, val in zip(self.__column_names, row[2:])
-                            if h in self.__key_hash_to_original_key
+                            if h in self.schema
                         },
                         self.__decompressor,
                     )
@@ -529,8 +452,8 @@ class DefinedIndex:
         if query is not None:
             sql_query, sql_params = delete_query(
                 table_name=self.name,
-                query={self.__original_key_to_key_hash[k]: v for k, v in query.items()},
-                schema=self.__hashed_key_schema,
+                query={k: v for k, v in query.items()},
+                schema=self.schema,
             )
 
             self.__connection.execute(sql_query, sql_params)
@@ -549,8 +472,8 @@ class DefinedIndex:
     def count(self, query={}):
         sql_query, sql_params = count_query(
             table_name=self.name,
-            query={self.__original_key_to_key_hash[k]: v for k, v in query.items()},
-            schema=self.__hashed_key_schema,
+            query={k: v for k, v in query.items()},
+            schema=self.schema,
         )
 
         return self.__connection.execute(sql_query, sql_params).fetchone()[0]
@@ -563,14 +486,13 @@ class DefinedIndex:
         size_hashes = []
 
         for k in keys:
-            key_hash = self.__original_key_to_key_hash[k]
             if self.schema[k] in {"blob", "other"}:
-                key_hashes.append(f"__hash_{key_hash}")
-                size_hashes.append(f"__size_{key_hash}")
+                key_hashes.append(f"__hash_{k}")
+                size_hashes.append(f"__size_{k}")
             elif self.schema[k] == "json":
                 pass
             else:
-                key_hashes.append(key_hash)
+                key_hashes.append(k)
 
         if key_hashes:
             self.__connection.execute(
@@ -588,9 +510,7 @@ class DefinedIndex:
         return {
             k: v
             for k, v in {
-                self.__key_hash_to_original_key.get(
-                    _[1].replace(f"idx_{self.name}_", "")
-                ): {"is_unique": bool(_[2])}
+                _[1].replace(f"idx_{self.name}_", ""): {"is_unique": bool(_[2])}
                 for _ in self.__connection.execute(
                     f"PRAGMA index_list({self.name})"
                 ).fetchall()
@@ -618,9 +538,9 @@ class DefinedIndex:
 
         sql_query, sql_params = op_func(
             table_name=self.name,
-            column=self.__original_key_to_key_hash[key],
-            query={self.__original_key_to_key_hash[k]: v for k, v in query.items()},
-            schema=self.__hashed_key_schema,
+            column=key,
+            query={k: v for k, v in query.items()},
+            schema=self.schema,
         )
 
         return self.__connection.execute(sql_query, sql_params).fetchone()[0]
