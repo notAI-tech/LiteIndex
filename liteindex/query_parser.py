@@ -25,7 +25,10 @@ def parse_query(query, schema, prefix=None):
         if isinstance(value, dict):
             sub_conditions = []
             for sub_key, sub_value in value.items():
-                if sub_key in ["$ne", "$like", "$gt", "$lt", "$gte", "$lte"]:
+                if sub_value is None and sub_key == "$ne":
+                    sub_conditions.append(f"{column} IS NOT NULL")
+
+                elif sub_key in ["$ne", "$like", "$gt", "$lt", "$gte", "$lte"]:
                     operator = {
                         "$ne": "!=",
                         "$like": "LIKE",
