@@ -4,15 +4,27 @@ import sqlite3
 import hashlib
 import datetime
 
+
+class DefinedTypes:
+    number = "number"
+    string = "string"
+    boolean = "boolean"
+    datetime = "datetime"
+    compressed_string = "compressed_string"
+    blob = "blob"
+    other = "other"
+    json = "json"
+
+
 schema_property_to_column_type = {
-    "boolean": "INTEGER",
-    "string": "TEXT",
-    "number": "NUMBER",
-    "datetime": "NUMBER",
-    "compressed_string": "BLOB",
-    "blob": "BLOB",
-    "other": "BLOB",
-    "json": "JSON",
+    DefinedTypes.boolean: "INTEGER",
+    DefinedTypes.string: "TEXT",
+    DefinedTypes.number: "NUMBER",
+    DefinedTypes.datetime: "NUMBER",
+    DefinedTypes.compressed_string: "BLOB",
+    DefinedTypes.blob: "BLOB",
+    DefinedTypes.other: "BLOB",
+    DefinedTypes.json: "JSON",
 }
 
 
