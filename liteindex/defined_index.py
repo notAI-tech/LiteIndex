@@ -259,7 +259,9 @@ class DefinedIndex:
             ids = [ids]
 
         if select_keys is None:
-            select_keys = list(self.schema)
+            select_keys = self.schema
+
+        select_keys = tuple(select_keys)
 
         # Prepare the SQL command
         columns = ", ".join([f'"{h}"' for h in select_keys])
@@ -273,11 +275,11 @@ class DefinedIndex:
                 self.schema, update, self.__compressor
             )
 
-            update_columns = ", ".join([f'"{h}" = ?' for h in update.keys()])
+            update_columns = ", ".join((f'"{h}" = ?' for h in update.keys()))
 
-            sql_query = f"UPDATE {self.name} SET {update_columns} WHERE id IN ({id_placeholders}) RETURNING {', '.join(['id'] + select_keys)}"
+            sql_query = f"UPDATE {self.name} SET {update_columns} WHERE id IN ({id_placeholders}) RETURNING {', '.join(('id') + select_keys)}"
 
-            sql_params = [_ for _ in update.values()] + ids
+            sql_params = tuple(update.values()) + ids
 
             _result = self.__connection.execute(sql_query, sql_params).fetchall()
             self.__connection.commit()
@@ -327,7 +329,9 @@ class DefinedIndex:
             sort_by = f"__size_{sort_by}"
 
         if not select_keys:
-            select_keys = tuple(self.schema)
+            select_keys = self.schema
+
+        select_keys = tuple(select_keys)
 
         sql_query, sql_params = search_query(
             table_name=self.name,
@@ -352,7 +356,7 @@ class DefinedIndex:
 
             update_columns = ", ".join([f'"{h}" = ?' for h in update.keys()])
 
-            sql_query = f"UPDATE {self.name} SET {update_columns} WHERE id IN ({sql_query}) RETURNING {', '.join(['id', 'updated_at'] + select_keys)}"
+            sql_query = f"UPDATE {self.name} SET {update_columns} WHERE id IN ({sql_query}) RETURNING {', '.join(('id', 'updated_at') + select_keys)}"
 
             sql_params = [_ for _ in update.values()] + sql_params
 

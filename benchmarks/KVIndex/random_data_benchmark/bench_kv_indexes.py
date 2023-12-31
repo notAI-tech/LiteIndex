@@ -1,5 +1,5 @@
 import sys
-sys.path.append("../../../")
+sys.path = ["../../../"] + sys.path
 
 import os
 import uuid
@@ -14,8 +14,6 @@ from tqdm import tqdm
 from liteindex import KVIndex, EvictionCfg
 from diskcache import Index as DiskCacheIndex
 from sqlitedict import SqliteDict
-
-from random_data_generator import generate_data
 
 def get_indexes():
     DATA_DIR = f"DATA"
