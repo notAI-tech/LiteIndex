@@ -18,14 +18,14 @@ URL = "https://github.com/notAI-tech/liteindex"
 EMAIL = "praneeth@bpraneeth.com"
 AUTHOR = "BEDAPUDI PRANEETH"
 REQUIRES_PYTHON = ">=3.6.0"
-VERSION = "0.0.2.dev36"
+VERSION = "0.0.2.dev37"
 
 # What packages are required for this module to be executed?
 REQUIRED = []
 
 # What packages are optional?
 EXTRAS = {
-    'all': ['zstandard', 'lmdb'],
+    'all': ['zstandard'],
 }
 
 # The rest you shouldn't have to touch too much :)
