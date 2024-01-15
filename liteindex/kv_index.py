@@ -191,7 +191,7 @@ class KVIndex:
     def __contains__(self, key):
         if self.__connection.execute(
             "SELECT COUNT(*) FROM kv_index WHERE key_hash = ?",
-            (self.__encode_and_hash(key)[0]),
+            (self.__encode_and_hash(key)[0],),
         ).fetchone()[0]:
             return True
 
