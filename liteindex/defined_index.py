@@ -552,7 +552,7 @@ class DefinedIndex:
 
         return self.__connection.execute(sql_query, sql_params).fetchone()[0]
 
-    def trigger(
+    def create_trigger(
         self, function, operation="UPDATE", timing="AFTER", on_keys=None, each_row=False
     ):
         trigger_name = f"{self.name}_{operation.lower()}_trigger"
