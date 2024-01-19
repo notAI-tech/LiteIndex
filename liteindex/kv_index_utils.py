@@ -1,4 +1,7 @@
-from .common_utils import EvictionCfg
+try:
+    from .common_utils import EvictionCfg
+except ImportError:
+    from common_utils import EvictionCfg
 
 __policy_to_number_int_id = {
     EvictionCfg.EvictAny: 1,
@@ -97,138 +100,48 @@ def create_tables(store_key, preserve_order, eviction, conn):
         )
 
 
-import pickle
-
-
-def serialize(value):
-    return sqlite3.Binary(pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL))
-
-
-def get_column_by_value(value):
-    if isinstance(value, (int, float)):
-        return "num_value"
-    elif isinstance(value, str):
-        return "string_value"
-    else:
-        return "pickled_value"
-
-
-def handle_like(operator, value):
-    # This only applies to strings
-    column = "string_value"
-    if operator == "$startswith":
-        value = f"{value}%"
-    elif operator == "$endswith":
-        value = f"%{value}"
-    elif operator == "$like":
-        # The value in this case should already have % or _ for the LIKE pattern
-        value = value
-    else:
-        raise ValueError(f"Unknown operator for LIKE: {operator}")
-
-    return f"{column} LIKE ?", (value,)
-
-
-def handle_comparison(operator, value):
-    column = get_column_by_value(value)
-
-    operators_map = {
-        "$eq": "=",
-        "$ne": "!=",
-        "$gt": ">",
-        "$lt": "<",
-        "$gte": ">=",
-        "$lte": "<=",
+def create_where_clause(params):
+    op_map = {
+        '$eq': '=',
+        '$gt': '>',
+        '$gte': '>=',
+        '$lt': '<',
+        '$lte': '<=',
+        '$neq': '!=',
+        '$in': 'IN',
+        '$nin': 'NOT IN',
+        '$startswith': 'LIKE',
+        '$endswith': 'LIKE',
     }
-
-    sql_operator = operators_map.get(operator)
-    if sql_operator is None:
-        raise ValueError(f"Unknown comparison operator: {operator}")
-
-    if column == "pickled_value":
-        # Using parameterized queries to prevent injection
-        return f"{column} {sql_operator} ?", (serialize(value),)
-    else:
-        return f"{column} {sql_operator} ?", (value,)
-
-
-def handle_in_operator(value, operator):
-    column = get_column_by_value(value[0])
-
-    placeholders = ", ".join(["?"] * len(value))
-    if column == "pickled_value":
-        value = list(map(serialize, value))
-
-    operator = "IN" if operator == "$in" else "NOT IN"
-    sql = f"{column} {operator} ({placeholders})"
-    return sql, tuple(value)
-
-
-def handle_logical(operator, values):
-    clauses = []
-    params = []
-
-    for key, value in query.items():
-        if key == "$eq":
-            column = "num_value"
-            clauses.append(f"{column} = ?")
-            params.append(value)
-        elif key == "$gt":
-            clauses.append(f"num_value > ?")
-            params.append(value)
-        elif key == "$gte":
-            clauses.append(f"num_value >= ?")
-            params.append(value)
-        elif key == "$lt":
-            clauses.append(f"num_value < ?")
-            params.append(value)
-        elif key == "$lte":
-            clauses.append(f"num_value <= ?")
-            params.append(value)
-        elif key == "$neq":
-            column = "num_value"
-            clauses.append(f"{column} != ?")
-            params.append(value)
-        elif key == "$in":
-            column = (
-                "string_value"  # Assuming all in/nin operations are for string_value
-            )
-            placeholders = ", ".join(["?"] * len(value))
-            clauses.append(f"{column} IN ({placeholders})")
-            params.extend(value)
-        elif key == "$nin":
-            column = "string_value"
-            placeholders = ", ".join(["?"] * len(value))
-            clauses.append(f"{column} NOT IN ({placeholders})")
-            params.extend(value)
-        elif key == "$startswith":
-            clauses.append(f"string_value LIKE ?")
-            params.append(value + "%")
-        elif key == "$endswith":
-            clauses.append(f"string_value LIKE ?")
-            params.append("%" + value)
-        elif key == "$or" or key == "$and":
-            sub_clauses, new_params = create_where_clause_combined(
-                value, key.replace("$", "").upper(), []
-            )
-            combined_clause = f" {key.replace('$', ' ').upper().strip()} ".join(
-                sub_clauses
-            )
-            clauses.append(f"({combined_clause})")
-            params.extend(new_params)
-    return " AND ".join(clauses), params
-
-
-# Function to handle '$or' and '$and' by creating sub-clauses
-def create_where_clause_combined(queries, combinator, params):
-    sub_clauses = []
-    param_list = []
-    for subquery in queries:
-        clause, new_params = create_where_clause(subquery, [])
-        sub_clauses.append(clause)
-        param_list.extend(new_params)
-    return sub_clauses, param_list
-
+    param_map = {
+        str: 'string_value',
+        int: 'num_value',
+        float: 'num_value',
+        list: 'num_value'
+    }
+    wheres = []
+    args = []
+    for op, value in params.items():
+        if op == '$and' or op == '$or':
+            subwheres = []
+            for sv in value:
+                sw, sa = create_where_clause(sv)
+                subwheres.append(sw)
+                args.extend(sa)
+            wheres.append(' ({}) '.format(' AND '.join(subwheres) if op == '$and' else ' OR '.join(subwheres)))
+        elif op == '$startswith':
+            wheres.append('{} LIKE ?'.format(param_map[type(value)]))
+            args.append(value + '%')
+        elif op == '$endswith':
+            wheres.append('{} LIKE ?'.format(param_map[type(value)]))
+            args.append('%' + value)
+        elif op in ('$in', '$nin'):
+            wheres.append('{} {} ({})'.format(param_map[type(value[0])], op_map[op], ','.join('?'*len(value))))
+            args.extend(value)
+        else:
+            wheres.append('{} {} ?'.format(param_map[type(value)], op_map[op]))
+            args.append(value)
+    return ' AND '.join(wheres), args
 
 if __name__ == "__main__":
     print(create_where_clause({"$eq": 1}))
