@@ -561,3 +561,32 @@ class KVIndex:
                 "UPDATE kv_index_num_metadata SET num = 0 WHERE key = ?",
                 ("current_size_in_mb",),
             )
+    
+    def create_trigger(self, on_key_changed, function_to_trigger, operation="INSERT", timing="AFTER"):
+        trigger_name = f"{on_key_changed}_{operation}_{timing}_trigger"
+
+        operation = operation.upper()
+        timing = timing.upper()
+
+        if operation not in {"INSERT", "DELETE"}:
+            raise ValueError("Invalid operation type. Allowed: UPDATE | DELETE")
+
+        if timing not in {"BEFORE", "AFTER"}:
+            raise ValueError("Invalid timing. Choose: BEFORE, AFTER.")
+
+        with self.__connection as conn:
+            conn.create_function(trigger_name, 1, function_to_trigger, deterministic=False)
+        
+            trigger_sql = f"""
+                CREATE TRIGGER {trigger_name}
+                {timing} {operation} ON kv_index
+
+                WHEN NEW.key_hash = X'{self.__encode_and_hash(on_key_changed)[0].hex()}'
+
+                BEGIN
+                    SELECT {trigger_name}(NEW.string_value);
+                END;
+            """
+
+            conn.execute(trigger_sql)
+
