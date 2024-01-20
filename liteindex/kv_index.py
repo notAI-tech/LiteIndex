@@ -1,5 +1,5 @@
 from .common_utils import set_ulimit, EvictionCfg
-from .kv_index_utils import create_tables
+from .kv_index_utils import create_tables, create_where_clause
 
 set_ulimit()
 
@@ -454,7 +454,7 @@ class KVIndex:
                 params_for_execute_many,
             )
 
-    def search_by_value(
+    def search(
         self,
         query={},
         sort_by=None,
@@ -462,7 +462,23 @@ class KVIndex:
         n=None,
         page_no=None,
     ):
-        query_str, params = search_query(table_name="kv_index", query={"num"})
+        if not isinstance(query, dict):
+            query = {"$eq": query}
+
+        query_str, params = create_where_clause(query)
+
+        results = {}
+
+        for row in self.__connection.execute(
+            f"SELECT key_hash, pickled_key, num_value, string_value, pickled_value FROM kv_index WHERE {query_str} {'ORDER BY updated_at' if self.preserve_order else ''} {'DESC' if reversed_sort else ''} LIMIT {n if n else -1} OFFSET {page_no * n if page_no else 0}",
+            params,
+        ):
+            if row is None:
+                break
+
+            results[self.__decode_key(row[1], row[0])] = self.__decode_value(row[2:])
+        
+        return results
 
     def math(self, key, value, op):
         ops = {"+": "+", "-": "-", "*": "*", "/": "/", "//": "//", "%": "%", "**": "**"}

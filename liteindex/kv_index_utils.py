@@ -100,7 +100,17 @@ def create_tables(store_key, preserve_order, eviction, conn):
         )
 
 
-def create_where_clause(params):
+def __get_column_name(value):
+    if isinstance(value, (int, float)):
+        return "num_value"
+    elif isinstance(value, bool):
+        return "num_value"
+    elif isinstance(value, str):
+        return "string_value"
+    else:
+        return "pickled_value"
+
+def create_where_clause(query):
     op_map = {
         '$eq': '=',
         '$gt': '>',
@@ -113,15 +123,10 @@ def create_where_clause(params):
         '$startswith': 'LIKE',
         '$endswith': 'LIKE',
     }
-    param_map = {
-        str: 'string_value',
-        int: 'num_value',
-        float: 'num_value',
-        list: 'num_value'
-    }
+
     wheres = []
     args = []
-    for op, value in params.items():
+    for op, value in query.items():
         if op == '$and' or op == '$or':
             subwheres = []
             for sv in value:
@@ -130,16 +135,16 @@ def create_where_clause(params):
                 args.extend(sa)
             wheres.append(' ({}) '.format(' AND '.join(subwheres) if op == '$and' else ' OR '.join(subwheres)))
         elif op == '$startswith':
-            wheres.append('{} LIKE ?'.format(param_map[type(value)]))
+            wheres.append('{} LIKE ?'.format(__get_column_name(value)))
             args.append(value + '%')
         elif op == '$endswith':
-            wheres.append('{} LIKE ?'.format(param_map[type(value)]))
+            wheres.append('{} LIKE ?'.format(__get_column_name(value)))
             args.append('%' + value)
         elif op in ('$in', '$nin'):
-            wheres.append('{} {} ({})'.format(param_map[type(value[0])], op_map[op], ','.join('?'*len(value))))
+            wheres.append('{} {} ({})'.format(__get_column_name(value[0]), op_map[op], ','.join('?'*len(value))))
             args.extend(value)
         else:
-            wheres.append('{} {} ?'.format(param_map[type(value)], op_map[op]))
+            wheres.append('{} {} ?'.format(__get_column_name(value), op_map[op]))
             args.append(value)
     return ' AND '.join(wheres), args
 
