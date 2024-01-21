@@ -160,19 +160,25 @@ def create_where_clause(query):
             wheres.append("{} REGEXP ?".format(__get_column_name(value)))
             args.append(value)
         else:
-            column_name = __get_column_name(value)
-            if column_name == "pickled_value":
-                if not isinstance(value, bytes):
-                    value = pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
-
-            if isinstance(value, bool):
+            if value is None:
+                # num_value, string_value, pickled_value all should be NULL
                 wheres.append(
-                    f"(pickled_value {op_map[op]} ? AND num_value = {int(value)})"
+                    "num_value IS NULL AND string_value IS NULL AND pickled_value IS NULL"
                 )
-                args.append(b"")
             else:
-                wheres.append(f"{column_name} {op_map[op]} ?")
-                args.append(value)
+                column_name = __get_column_name(value)
+                if column_name == "pickled_value":
+                    if not isinstance(value, bytes):
+                        value = pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
+
+                if isinstance(value, bool):
+                    wheres.append(
+                        f"(pickled_value {op_map[op]} ? AND num_value = {int(value)})"
+                    )
+                    args.append(b"")
+                else:
+                    wheres.append(f"{column_name} {op_map[op]} ?")
+                    args.append(value)
 
     return " AND ".join(wheres), args
 

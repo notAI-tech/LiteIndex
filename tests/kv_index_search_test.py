@@ -32,7 +32,7 @@ assert index.search("value") == {}
 assert index.search("value1", n=10, offset=0) == {"key1": "value1"}
 assert index.search("value1", n=10, offset=1) == {}
 
-# assert index.search(None) == {"keyNone": None}
+assert index.search(None) == {"keyNone": None}
 assert index.search(True) == {"keyTrue": True}
 
 assert index.search({"$gt": 6}, n=10, offset=0) == {

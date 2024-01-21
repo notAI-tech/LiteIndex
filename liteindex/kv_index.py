@@ -474,10 +474,11 @@ class KVIndex:
 
         sort_by = "updated_at" if self.preserve_order else "ROWID"
 
-        if isinstance(params[0], (int, float)):
-            sort_by = "num_value"
-        else:
-            sort_by = "string_value"
+        if sort_by_value:
+            if isinstance(params[0], (int, float)):
+                sort_by = "num_value"
+            else:
+                sort_by = "string_value"
 
         sort_by = f"ORDER BY {sort_by} {'DESC' if reversed_sort else ''}"
 
