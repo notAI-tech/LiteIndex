@@ -457,7 +457,7 @@ class KVIndex:
     def search(
         self,
         query={},
-        sort_by=None,
+        sort_by_value=False,
         reversed_sort=False,
         n=None,
         page_no=None,
@@ -465,19 +465,31 @@ class KVIndex:
         if not isinstance(query, dict):
             query = {"$eq": query}
 
-        query_str, params = create_where_clause(query)
+        try:
+            query_str, params = create_where_clause(query)
+        except:
+            query_str, params = create_where_clause({"$eq": query})
 
         results = {}
 
+        sort_by = "updated_at" if self.preserve_order else "ROWID"
+
+        if isinstance(params[0], (int, float)):
+            sort_by = "num_value"
+        else:
+            sort_by = "string_value"
+
+        sort_by = f"ORDER BY {sort_by} {'DESC' if reversed_sort else ''}"
+
         for row in self.__connection.execute(
-            f"SELECT key_hash, pickled_key, num_value, string_value, pickled_value FROM kv_index WHERE {query_str} {'ORDER BY updated_at' if self.preserve_order else ''} {'DESC' if reversed_sort else ''} LIMIT {n if n else -1} OFFSET {page_no * n if page_no else 0}",
+            f"SELECT key_hash, pickled_key, num_value, string_value, pickled_value FROM kv_index WHERE {query_str} {sort_by} LIMIT {n if n else -1} OFFSET {page_no * n if page_no else 0}",
             params,
         ):
             if row is None:
                 break
 
             results[self.__decode_key(row[1], row[0])] = self.__decode_value(row[2:])
-        
+
         return results
 
     def math(self, key, value, op):
@@ -577,8 +589,10 @@ class KVIndex:
                 "UPDATE kv_index_num_metadata SET num = 0 WHERE key = ?",
                 ("current_size_in_mb",),
             )
-    
-    def create_trigger(self, on_key_changed, function_to_trigger, operation="INSERT", timing="AFTER"):
+
+    def create_trigger(
+        self, on_key_changed, function_to_trigger, operation="INSERT", timing="AFTER"
+    ):
         trigger_name = f"{on_key_changed}_{operation}_{timing}_trigger"
 
         operation = operation.upper()
@@ -591,8 +605,10 @@ class KVIndex:
             raise ValueError("Invalid timing. Choose: BEFORE, AFTER.")
 
         with self.__connection as conn:
-            conn.create_function(trigger_name, 1, function_to_trigger, deterministic=False)
-        
+            conn.create_function(
+                trigger_name, 1, function_to_trigger, deterministic=False
+            )
+
             trigger_sql = f"""
                 CREATE TRIGGER {trigger_name}
                 {timing} {operation} ON kv_index
@@ -605,4 +621,3 @@ class KVIndex:
             """
 
             conn.execute(trigger_sql)
-

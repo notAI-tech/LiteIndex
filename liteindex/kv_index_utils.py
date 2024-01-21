@@ -100,6 +100,9 @@ def create_tables(store_key, preserve_order, eviction, conn):
         )
 
 
+import pickle
+
+
 def __get_column_name(value):
     if isinstance(value, (int, float)):
         return "num_value"
@@ -110,46 +113,74 @@ def __get_column_name(value):
     else:
         return "pickled_value"
 
+
 def create_where_clause(query):
     op_map = {
-        '$eq': '=',
-        '$gt': '>',
-        '$gte': '>=',
-        '$lt': '<',
-        '$lte': '<=',
-        '$neq': '!=',
-        '$in': 'IN',
-        '$nin': 'NOT IN',
-        '$startswith': 'LIKE',
-        '$endswith': 'LIKE',
+        "$eq": "=",
+        "$gt": ">",
+        "$gte": ">=",
+        "$lt": "<",
+        "$lte": "<=",
+        "$neq": "!=",
+        "$in": "IN",
+        "$nin": "NOT IN",
+        "$startswith": "LIKE",
+        "$endswith": "LIKE",
+        "$regex": "REGEXP",
     }
 
     wheres = []
     args = []
     for op, value in query.items():
-        if op == '$and' or op == '$or':
+        if op == "$and" or op == "$or":
             subwheres = []
             for sv in value:
                 sw, sa = create_where_clause(sv)
                 subwheres.append(sw)
                 args.extend(sa)
-            wheres.append(' ({}) '.format(' AND '.join(subwheres) if op == '$and' else ' OR '.join(subwheres)))
-        elif op == '$startswith':
-            wheres.append('{} LIKE ?'.format(__get_column_name(value)))
-            args.append(value + '%')
-        elif op == '$endswith':
-            wheres.append('{} LIKE ?'.format(__get_column_name(value)))
-            args.append('%' + value)
-        elif op in ('$in', '$nin'):
-            wheres.append('{} {} ({})'.format(__get_column_name(value[0]), op_map[op], ','.join('?'*len(value))))
+            wheres.append(
+                " ({}) ".format(
+                    " AND ".join(subwheres) if op == "$and" else " OR ".join(subwheres)
+                )
+            )
+        elif op == "$startswith":
+            wheres.append("{} LIKE ?".format(__get_column_name(value)))
+            args.append(value + "%")
+        elif op == "$endswith":
+            wheres.append("{} LIKE ?".format(__get_column_name(value)))
+            args.append("%" + value)
+        elif op in ("$in", "$nin"):
+            wheres.append(
+                "{} {} ({})".format(
+                    __get_column_name(value[0]), op_map[op], ",".join("?" * len(value))
+                )
+            )
             args.extend(value)
-        else:
-            wheres.append('{} {} ?'.format(__get_column_name(value), op_map[op]))
+        elif op == "$regex":
+            wheres.append("{} REGEXP ?".format(__get_column_name(value)))
             args.append(value)
-    return ' AND '.join(wheres), args
+        else:
+            column_name = __get_column_name(value)
+            if column_name == "pickled_value":
+                if not isinstance(value, bytes):
+                    value = pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
+
+            if isinstance(value, bool):
+                wheres.append(
+                    f"(pickled_value {op_map[op]} ? AND num_value = {int(value)})"
+                )
+                args.append(b"")
+            else:
+                wheres.append(f"{column_name} {op_map[op]} ?")
+                args.append(value)
+
+    return " AND ".join(wheres), args
+
 
 if __name__ == "__main__":
     print(create_where_clause({"$eq": 1}))
+    print(create_where_clause({"$eq": True}))
+    print(create_where_clause({"$or": [{"$eq": 1}, {"$eq": False}]}))
     print(create_where_clause({"$gt": 1}))
     print(create_where_clause({"$gte": 1}))
     print(create_where_clause({"$lt": 1}))
