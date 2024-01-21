@@ -460,7 +460,7 @@ class KVIndex:
         sort_by_value=False,
         reversed_sort=False,
         n=None,
-        page_no=None,
+        offset=None,
     ):
         if not isinstance(query, dict):
             query = {"$eq": query}
@@ -482,7 +482,7 @@ class KVIndex:
         sort_by = f"ORDER BY {sort_by} {'DESC' if reversed_sort else ''}"
 
         for row in self.__connection.execute(
-            f"SELECT key_hash, pickled_key, num_value, string_value, pickled_value FROM kv_index WHERE {query_str} {sort_by} LIMIT {n if n else -1} OFFSET {page_no * n if page_no else 0}",
+            f"SELECT key_hash, pickled_key, num_value, string_value, pickled_value FROM kv_index WHERE {query_str} {sort_by} LIMIT {n if n else -1} OFFSET {offset if offset else 0}",
             params,
         ):
             if row is None:
