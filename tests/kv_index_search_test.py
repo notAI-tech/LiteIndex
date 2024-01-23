@@ -49,4 +49,3 @@ assert index.search({"$gte": 6}, n=10, offset=0) == {
     "key9": 9,
     "key10": 10,
 }
-

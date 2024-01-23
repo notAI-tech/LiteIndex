@@ -599,11 +599,15 @@ class KVIndex:
         function_to_trigger,
         before_delete=False,
         after_set=False,
+        before_set=False,
         for_keys=None,
     ):
         if after_set:
             operation = "INSERT"
             timing = "AFTER"
+        elif before_set:
+            operation = "INSERT"
+            timing = "BEFORE"
         elif before_delete:
             operation = "DELETE"
             timing = "BEFORE"
