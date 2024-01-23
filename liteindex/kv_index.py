@@ -9,6 +9,7 @@ import pickle
 import hashlib
 import sqlite3
 import threading
+import functools
 
 
 class KVIndex:
@@ -592,33 +593,86 @@ class KVIndex:
             )
 
     def create_trigger(
-        self, on_key_changed, function_to_trigger, operation="INSERT", timing="AFTER"
+        self,
+        trigger_name,
+        for_key,
+        function_to_trigger,
+        before_delete=False,
+        after_set=False,
+        for_keys=None,
     ):
-        trigger_name = f"{on_key_changed}_{operation}_{timing}_trigger"
-
-        operation = operation.upper()
-        timing = timing.upper()
-
-        if operation not in {"INSERT", "DELETE"}:
-            raise ValueError("Invalid operation type. Allowed: UPDATE | DELETE")
-
-        if timing not in {"BEFORE", "AFTER"}:
-            raise ValueError("Invalid timing. Choose: BEFORE, AFTER.")
+        if after_set:
+            operation = "INSERT"
+            timing = "AFTER"
+        elif before_delete:
+            operation = "DELETE"
+            timing = "BEFORE"
+        else:
+            raise ValueError("before_delete or after_set must be True")
 
         with self.__connection as conn:
-            conn.create_function(
-                trigger_name, 1, function_to_trigger, deterministic=False
-            )
+            function_name = f"{trigger_name}_function"
 
-            trigger_sql = f"""
-                CREATE TRIGGER {trigger_name}
-                {timing} {operation} ON kv_index
+            if for_key:
+                conn.create_function(
+                    function_name, 0, function_to_trigger, deterministic=False
+                )
 
-                WHEN NEW.key_hash = X'{self.__encode_and_hash(on_key_changed)[0].hex()}'
+                if operation == "INSERT":
+                    trigger_sql = f"""
+                        CREATE TRIGGER {trigger_name}
+                        {timing} {operation} ON kv_index
 
-                BEGIN
-                    SELECT {trigger_name}(NEW.string_value);
-                END;
-            """
+                        WHEN NEW.key_hash = X'{self.__encode_and_hash(for_key)[0].hex()}'
 
-            conn.execute(trigger_sql)
+                        BEGIN
+                            SELECT {function_name}();
+                        END;
+                    """
+
+                elif operation == "DELETE":
+                    trigger_sql = f"""
+                        CREATE TRIGGER {trigger_name}
+                        {timing} {operation} ON kv_index
+
+                        WHEN OLD.key_hash = X'{self.__encode_and_hash(for_key)[0].hex()}'
+
+                        BEGIN
+                            SELECT {function_name}();
+                        END;
+                    """
+            elif for_keys:
+                conn.create_function(
+                    function_name, 1, function_to_trigger, deterministic=False
+                )
+
+                if operation == "INSERT":
+                    trigger_sql = f"""
+                        CREATE TRIGGER {trigger_name}
+                        {timing} {operation} ON kv_index
+
+                        WHEN NEW.key_hash IN ({', '.join([f"X'{self.__encode_and_hash(key)[0].hex()}'" for key in for_keys])})
+
+                        BEGIN
+                            SELECT {function_name}(NEW.key_hash);
+                        END;
+                    """
+
+                elif operation == "DELETE":
+                    trigger_sql = f"""
+                        CREATE TRIGGER {trigger_name}
+                        {timing} {operation} ON kv_index
+
+                        WHEN OLD.key_hash IN ({', '.join([f"X'{self.__encode_and_hash(key)[0].hex()}'" for key in for_keys])})
+
+                        BEGIN
+                            SELECT {function_name}(OLD.key_hash);
+                        END;
+                    """
+            else:
+                raise ValueError("for_key or for_keys must be provided")
+
+            if not conn.execute(
+                f"SELECT name FROM sqlite_master WHERE type='trigger' AND name='{trigger_name}'"
+            ).fetchone():
+                conn.execute(trigger_sql)
