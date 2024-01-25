@@ -4,6 +4,11 @@ import sqlite3
 import hashlib
 import datetime
 
+try:
+    import numpy as np
+except ImportError:
+    np = None
+
 
 class DefinedTypes:
     number = "number"
@@ -14,6 +19,7 @@ class DefinedTypes:
     blob = "blob"
     other = "other"
     json = "json"
+    normalized_embedding = "normalized_embedding"
 
 
 schema_property_to_column_type = {
@@ -25,6 +31,7 @@ schema_property_to_column_type = {
     DefinedTypes.blob: "BLOB",
     DefinedTypes.other: "BLOB",
     DefinedTypes.json: "JSON",
+    DefinedTypes.normalized_embedding: "BLOB",
 }
 
 
@@ -95,6 +102,17 @@ def serialize_record(schema, record, compressor, _id=None, _updated_at=None):
         elif _type == "json":
             _record[k] = None if v is None else json.dumps(v)
 
+        elif _type == "normalized_embedding":
+            v = None if v is None else v.tobytes()
+
+            _record[k] = (
+                None
+                if v is None
+                else compressor.compress(v)
+                if compressor is not False
+                else v
+            )
+
     return _record
 
 
@@ -144,5 +162,14 @@ def deserialize_record(schema, record, decompressor):
 
         elif key_type == "json":
             _record[k] = None if v is None else json.loads(v)
+
+        elif key_type == "normalized_embedding":
+            _record[k] = (
+                None
+                if v is None
+                else np.frombuffer(decompressor.decompress(v), dtype=np.float32)
+                if decompressor is not False
+                else np.frombuffer(v, dtype=np.float32)
+            )
 
     return _record

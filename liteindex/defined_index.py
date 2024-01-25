@@ -7,6 +7,7 @@ import re
 import os
 import time
 import json
+import uuid
 import pickle
 
 try:
@@ -20,6 +21,12 @@ try:
     import zstandard
 except:
     zstandard = None
+
+try:
+    import faiss
+    import numpy as np
+except:
+    faiss = None
 
 from .query_parser import (
     search_query,
@@ -51,6 +58,7 @@ class DefinedIndex:
         db_path=None,
         ram_cache_mb=64,
         compression_level=-1,
+        sortable_vector_keys_dims={},
     ):
         if sqlite3.sqlite_version < "3.35.0":
             raise ValueError(
@@ -62,12 +70,15 @@ class DefinedIndex:
         self.db_path = ":memory:" if db_path is None else db_path
         self.ram_cache_mb = ram_cache_mb
         self.compression_level = compression_level
+        self.sortable_vector_keys_dims = sortable_vector_keys_dims
 
         if self.name.startswith("__"):
             raise ValueError("Index name cannot start with '__'")
 
         self.__meta_table_name = f"__{self.name}_meta"
         self.__column_names = ["id", "updated_at"]
+
+        self.__vector_search_indexes = {}
 
         self.__local_storage = threading.local()
 
@@ -86,6 +97,119 @@ class DefinedIndex:
 
         self.__parse_schema()
         self.__create_table_and_meta_table()
+
+        if self.sortable_vector_keys_dims:
+            if faiss is None:
+                raise ValueError("faiss must be installed. `pip install faiss-cpu`")
+
+            for k in self.sortable_vector_keys_dims:
+                if k not in self.schema:
+                    raise ValueError(f"{k} must be one of {list(self.schema.keys())}")
+                if self.schema[k] != "normalized_embedding":
+                    raise ValueError(f"{k} must be of type normalized_embedding")
+
+                if self.sortable_vector_keys_dims[k] is None:
+                    raise ValueError("vector dimensions must be provided")
+
+            self.__build_vector_search_indexes()
+
+    def __build_vector_search_indexes(self):
+        if len(self.__vector_search_indexes) > 0:
+            return
+
+        self.__vector_search_indexes = {
+            k: faiss.IndexIDMap(faiss.IndexFlatIP(self.sortable_vector_keys_dims[k]))
+            for k in self.sortable_vector_keys_dims
+        }
+
+        embeddings_batches = {}
+        integer_id_batches = {}
+        batch_len = 0
+
+        for _id, _data in self.search(
+            return_metadata=True, select_keys=self.sortable_vector_keys_dims.keys()
+        ).items():
+            for k in self.sortable_vector_keys_dims:
+                embedding = _data[k]
+                if embedding is not None:
+                    if k not in embeddings_batches:
+                        embeddings_batches[k] = []
+                        integer_id_batches[k] = []
+
+                    embeddings_batches[k].append(embedding)
+                    integer_id_batches[k].append(_data["__meta"]["integer_id"])
+                    batch_len += 1
+
+            if batch_len >= 100000:
+                for k in integer_id_batches:
+                    if integer_id_batches[k]:
+                        self.__vector_search_indexes[k].add_with_ids(
+                            np.array(embeddings_batches[k], dtype=np.float32),
+                            np.array(integer_id_batches[k], dtype=np.int64),
+                        )
+                        embeddings_batches[k] = []
+                        integer_id_batches[k] = []
+
+                batch_len = 0
+
+        if batch_len > 0:
+            for k in integer_id_batches:
+                if integer_id_batches[k]:
+                    self.__vector_search_indexes[k].add_with_ids(
+                        np.array(embeddings_batches[k], dtype=np.float32),
+                        np.array(integer_id_batches[k], dtype=np.int64),
+                    )
+                    embeddings_batches[k] = []
+                    integer_id_batches[k] = []
+
+    def __add_to_vector_search_index(self, _ids):
+        embeddings_batches = {}
+        integer_id_batches = {}
+
+        for _id, _data in self.get(
+            list(_ids), select_keys=self.sortable_vector_keys_dims, return_metadata=True
+        ).items():
+            for key_name in self.sortable_vector_keys_dims:
+                if key_name not in embeddings_batches:
+                    embeddings_batches[key_name] = []
+                    integer_id_batches[key_name] = []
+
+                embedding = _data[key_name]
+                if embedding is not None:
+                    embeddings_batches[key_name].append(embedding)
+                    integer_id_batches[key_name].append(_data["__meta"]["integer_id"])
+
+        for key_name in self.sortable_vector_keys_dims:
+            if len(integer_id_batches[key_name]) > 0:
+                self.__vector_search_indexes[key_name].add_with_ids(
+                    np.array(embeddings_batches[key_name], dtype=np.float32),
+                    np.array(integer_id_batches[key_name], dtype=np.int64),
+                )
+
+    def __get_scores_and_integer_ids_table_name(self, query_embedding, key_name):
+        query_embedding = np.array(query_embedding, dtype=np.float32).reshape(1, -1)
+        scores, integer_ids = self.__vector_search_indexes[key_name].search(
+            query_embedding, self.__vector_search_indexes[key_name].ntotal
+        )
+
+        with self.__connection as conn:
+            _temp_name = f"temp_embeds_{uuid.uuid4().hex}"
+
+            conn.execute(
+                f"CREATE TEMP TABLE {_temp_name} (_integer_id INTEGER PRIMARY KEY, score NUMBER)"
+            )
+            _temp_name = f"temp.{_temp_name}"
+
+            def yield_transaction():
+                for i in range(len(integer_ids[0])):
+                    yield (int(integer_ids[0][i]), float(scores[0][i]))
+
+            conn.executemany(
+                f"INSERT INTO {_temp_name} (_integer_id, score) VALUES (?, ?)",
+                yield_transaction(),
+            )
+
+            return _temp_name
 
     def __del__(self):
         if self.__connection:
@@ -196,7 +320,7 @@ class DefinedIndex:
 
         with self.__connection:
             self.__connection.execute(
-                f"CREATE TABLE IF NOT EXISTS {self.name} (id TEXT PRIMARY KEY, updated_at NUMBER, {columns_str})"
+                f"CREATE TABLE IF NOT EXISTS {self.name} (integer_id INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE, updated_at NUMBER, {columns_str})"
             )
 
             self.__connection.execute(
@@ -254,20 +378,31 @@ class DefinedIndex:
 
                 self.__connection.executemany(sql, yield_transaction())
 
-    def get(self, ids, select_keys=None, update=None):
+            if self.sortable_vector_keys_dims:
+                self.__add_to_vector_search_index(data.keys())
+
+    def get(
+        self,
+        ids,
+        select_keys=None,
+        update=None,
+        return_metadata=False,
+        metadata_key_name="__meta",
+    ):
         if isinstance(ids, str):
             ids = [ids]
 
         if select_keys is None:
             select_keys = self.schema
 
-        select_keys = tuple(select_keys)
+        if not return_metadata:
+            select_keys = tuple(select_keys)
+        else:
+            select_keys = ("integer_id", "updated_at") + tuple(select_keys)
 
-        # Prepare the SQL command
         columns = ", ".join([f'"{h}"' for h in select_keys])
-        column_str = "id, " + columns  # Update this to include `id`
+        column_str = "id, " + columns
 
-        # Format the ids for the where clause
         id_placeholders = ", ".join(["?" for _ in ids])
 
         if update:
@@ -290,13 +425,27 @@ class DefinedIndex:
             )
             _result = self.__connection.execute(sql_query, ids).fetchall()
 
+        if return_metadata:
+            select_keys = select_keys[2:]
+
         result = {}
         for row in _result:
             result[row[0]] = defined_serializers.deserialize_record(
                 self.schema,
-                {h: val for h, val in zip(select_keys, row[1:])},
+                {
+                    h: val
+                    for h, val in zip(
+                        select_keys, row[1:] if not return_metadata else row[3:]
+                    )
+                },
                 self.__decompressor,
             )
+
+            if return_metadata:
+                result[row[0]][metadata_key_name] = {
+                    "integer_id": row[1],
+                    "updated_at": row[2],
+                }
 
         return result
 
@@ -321,12 +470,26 @@ class DefinedIndex:
         page_no=None,
         select_keys=[],
         update=None,
+        return_metadata=False,
+        metadata_key_name="__meta",
+        query_vector=None,
     ):
         if not sort_by:
             sort_by = "updated_at"
 
         elif self.schema[sort_by] in {"blob", "other"}:
             sort_by = f"__size_{sort_by}"
+
+        sorting_by_vector = False
+
+        if sort_by in self.sortable_vector_keys_dims:
+            if query_vector is None:
+                raise ValueError("query_vector must be provided")
+
+            integer_ids_to_scores_table_name = (
+                self.__get_scores_and_integer_ids_table_name(query_vector, sort_by)
+            )
+            sorting_by_vector = True
 
         if not select_keys:
             select_keys = self.schema
@@ -342,10 +505,22 @@ class DefinedIndex:
             n=n,
             page=page_no,
             page_size=n if page_no else None,
-            select_columns=(("id", "updated_at") + select_keys)
+            select_columns=(
+                ("integer_id", "id", "updated_at")
+                + (() if query_vector is None else ("score",))
+                + select_keys
+            )
             if not update
             else ["id"],
         )
+
+        if sorting_by_vector:
+            sql_query = sql_query.replace(
+                f"ORDER BY {sort_by}",
+                f"INNER JOIN {integer_ids_to_scores_table_name} ON {self.name}.integer_id = {integer_ids_to_scores_table_name}._integer_id ORDER BY {integer_ids_to_scores_table_name}.score",
+            )
+
+        print(sql_query, sql_params)
 
         _results = None
 
@@ -356,13 +531,12 @@ class DefinedIndex:
 
             update_columns = ", ".join([f'"{h}" = ?' for h in update.keys()])
 
-            sql_query = f"UPDATE {self.name} SET {update_columns} WHERE id IN ({sql_query}) RETURNING {', '.join(('id', 'updated_at') + select_keys)}"
+            sql_query = f"UPDATE {self.name} SET {update_columns} WHERE id IN ({sql_query}) RETURNING {', '.join(('integer_id', 'id', 'updated_at') + select_keys)}"
 
             sql_params = [_ for _ in update.values()] + sql_params
 
-            _results = self.__connection.execute(sql_query, sql_params).fetchall()
-
-            self.__connection.commit()
+            with self.__connection as conn:
+                _results = conn.execute(sql_query, sql_params).fetchall()
 
         else:
             _results = self.__connection.execute(sql_query, sql_params).fetchall()
@@ -370,12 +544,30 @@ class DefinedIndex:
         results = {}
 
         for result in _results:
-            _id, updated_at = result[:2]
+            if sorting_by_vector:
+                integer_id, _id, updated_at, score = result[:4]
+            else:
+                integer_id, _id, updated_at = result[:3]
+
             results[_id] = defined_serializers.deserialize_record(
                 self.schema,
-                {h: val for h, val in zip(select_keys, result[2:])},
+                {
+                    h: val
+                    for h, val in zip(
+                        select_keys, result[3:] if not sorting_by_vector else result[4:]
+                    )
+                },
                 self.__decompressor,
             )
+
+            if return_metadata:
+                results[_id][metadata_key_name] = {
+                    "integer_id": integer_id,
+                    "updated_at": updated_at,
+                }
+
+                if sorting_by_vector:
+                    results[_id][metadata_key_name]["sort_score"] = score
 
         return results
 
