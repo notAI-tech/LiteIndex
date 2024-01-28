@@ -103,7 +103,16 @@ def serialize_record(schema, record, compressor, _id=None, _updated_at=None):
             _record[k] = None if v is None else json.dumps(v)
 
         elif _type == "normalized_embedding":
-            v = None if v is None else v.tobytes()
+            if v is None:
+                v = None
+            else:
+                try:
+                    if v.ndim == 1 and v.dtype == np.float32:
+                        v = v.tobytes()
+                    else:
+                        raise ValueError("Invalid embedding")
+                except Exception:
+                    raise ValueError("Invalid embedding")
 
             _record[k] = (
                 None
