@@ -98,9 +98,15 @@ class DefinedIndex:
 
     def __update_vector_search_index(self, for_key, dim=None):
         if for_key not in self.__vector_indexes_last_updated_at:
-            self.__vector_search_indexes[for_key] = faiss.IndexIDMap(
-                faiss.IndexFlatIP(dim)
-            )
+            try:
+                self.__vector_search_indexes[for_key] = faiss.IndexIDMap(
+                    faiss.IndexFlatIP(dim)
+                )
+            except ImportError:
+                raise ValueError(
+                    "`pip install faiss-cpu` or `pip install liteindex[all]`"
+                )
+
             self.__vector_indexes_last_updated_at[for_key] = 0
 
         embeddings_batch = []
