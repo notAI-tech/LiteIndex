@@ -138,6 +138,7 @@ class DefinedIndex:
 
     def __get_scores_and_integer_ids_table_name(self, query_embedding, key_name):
         query_embedding = np.array(query_embedding, dtype=np.float32).reshape(1, -1)
+
         scores, integer_ids = self.__vector_search_indexes[key_name].search(
             query_embedding, self.__vector_search_indexes[key_name].ntotal
         )
