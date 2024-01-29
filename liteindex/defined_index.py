@@ -415,6 +415,7 @@ class DefinedIndex:
         sort_by=None,
         reversed_sort=False,
         n=None,
+        offset=None,
         page_no=None,
         select_keys=[],
         update=None,
@@ -423,6 +424,9 @@ class DefinedIndex:
         query_vector=None,
         meta_query={},
     ):
+        if page_no is not None:
+            offset = (page_no - 1) * n
+
         if not sort_by:
             sort_by = "updated_at"
 
@@ -458,8 +462,7 @@ class DefinedIndex:
             sort_by=sort_by,
             reversed_sort=reversed_sort,
             n=n,
-            page=page_no,
-            page_size=n if page_no else None,
+            offset=offset,
             select_columns=(
                 ("integer_id", "id", "updated_at")
                 + (() if query_vector is None else ("score",))

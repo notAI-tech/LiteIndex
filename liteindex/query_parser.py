@@ -144,16 +144,13 @@ def search_query(
     sort_by=None,
     reversed_sort=False,
     n=None,
-    page=None,
-    page_size=50,
+    offset=None,
     select_columns=None,
 ):
-    # Prepare the query
     where_conditions, params = parse_query(query, schema)
 
     selected_columns = ", ".join(select_columns) if select_columns else "*"
 
-    # Build the query string
     query_str = f"SELECT {selected_columns} FROM {table_name}"
     if where_conditions:
         query_str += f" WHERE {' AND '.join(where_conditions)}"
@@ -174,11 +171,7 @@ def search_query(
         else:
             query_str += f" ORDER BY {sort_by} {'DESC' if reversed_sort else 'ASC'}"
 
-    if n is not None:
-        query_str += f" LIMIT {n}"
-    elif page is not None:
-        start = (page - 1) * page_size
-        query_str += f" LIMIT {start}, {page_size}"
+    query_str += f" LIMIT {n if n is not None else -1} OFFSET {offset if offset is not None else 0}"
 
     return query_str, params
 
@@ -437,9 +430,11 @@ if __name__ == "__main__":
 
         def test_pagination(self):
             query, params = search_query(
-                "users", {"age": 25}, self.schema, page=2, page_size=10
+                "users", {"age": 25}, self.schema, offset=10, n=10
             )
-            self.assertEqual(query, "SELECT * FROM users WHERE age = ? LIMIT 10, 10")
+            self.assertEqual(
+                query, "SELECT * FROM users WHERE age = ? LIMIT 10 OFFSET 10"
+            )
             self.assertEqual(params, [25])
 
         def test_select_columns(self):
