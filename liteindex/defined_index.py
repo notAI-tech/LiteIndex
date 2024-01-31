@@ -348,6 +348,8 @@ class DefinedIndex:
 
         if select_keys is None:
             select_keys = self.schema
+        elif not select_keys:
+            select_keys = []
 
         if not return_metadata:
             select_keys = tuple(select_keys)
@@ -423,7 +425,7 @@ class DefinedIndex:
         n=None,
         offset=None,
         page_no=None,
-        select_keys=[],
+        select_keys=None,
         update=None,
         return_metadata=False,
         metadata_key_name="__meta",
@@ -453,8 +455,11 @@ class DefinedIndex:
                 self.__get_scores_and_integer_ids_table_name(sort_by_embedding, sort_by)
             )
 
-        if not select_keys:
+        if select_keys is None:
             select_keys = self.schema
+
+        elif not select_keys:
+            select_keys = []
 
         select_keys = tuple(select_keys)
 
