@@ -11,6 +11,7 @@
 | datetime   | datetime.datetime objects        |
 | blob   | files as bytes, queryable for equality and sorted on size |
 | json   | any type of json dump-able objects        |
+| normalized_embedding | float32 normalized numpy array, queryable for equality, sorting or scoring with similarity to a query embedding |
 | other   | any objects. stored as pickled blobs internally, queryable for equality and sorted on size|
 
 
@@ -54,18 +55,18 @@
 ***example use***
 
 ```python
-from liteindex import DefinedIndex
+from liteindex import DefinedIndex, DefinedTypes
 
 schema = {
-    "name": "string",
-    "age": "number",
-    "password": "string",
-    "verified": "boolean",
-    "birthday": "datetime",
-    "profile_picture": "blob",
-    "nicknames": "json",
-    "user_embedding": "other",
-    "user_bio": "compressed_string",
+    "name": DefinedTypes.string,
+    "age": DefinedTypes.number,
+    "password": DefinedTypes.string,
+    "verified": DefinedTypes.boolean,
+    "birthday": DefinedTypes.datetime,
+    "profile_picture": DefinedTypes.blob,
+    "nicknames": DefinedTypes.json,
+    "user_embedding": DefinedTypes.normalized_embedding,
+    "user_bio": DefinedTypes.compressed_string,
 }
 
 index = DefinedIndex(
@@ -157,12 +158,16 @@ index.drop()
 - `query`: Query dictionary. Defaults to `{}` which will return all records. 
 [Full list of queries supported](https://github.com/notAI-tech/LiteIndex/blob/main/Query.md)
 
-- `sort_by`: A key from schema. `Defaults to None` which will return records in insertion order.
+- `sort_by`: A key from schema. `Defaults to None` which will return records in insertion order. if `sort_by` is a key of type normalized_embedding, a np array has to be provided in `sort_by_embedding` to sort by similarity to this array, scores will be returned in `__meta` key of the record
 - `reversed_sort`: Defaults to `False`. If `True`, will return records in reverse order.
 - `n`: Defaults to `None` which will return all records.
 - `page_no`: Defaults to `1` which will return the first page of n records.
+- `offset`: Defaults to `0` which will return the first page of n records. page_no or offset can be used, not both.
 - `select_keys`: A list of keys from schema. Defaults to `None` which will return all keys.
 - `update`: Optional dictionary of format `{key: record}`. If provided, will update the records in the index that match the query and return the updated records.
+- `return_metadata`: 
+- `metadata_key_name`:  defaults to `__meta` under this key will be a dict with {"integer_id": unique_integer_id, "updated_at": last_update_at time from epoch, "score": if doing embedding sort}
+- `sort_by_embedding`: if `sort_by` is a key of type normalized_embedding, a np array has to be provided here to sort by similarity to this array
 - `return`: dict of format `{id: record, id1: record, ....}`
 
 [Full list of queries supported](https://github.com/notAI-tech/LiteIndex/blob/main/Query.md)
@@ -176,6 +181,17 @@ index.search()
 index.search(
     query={"name": "John Doe"},
     sort_by="age",
+    reversed_sort=True,
+    n=10,
+    page_no=1,
+    select_keys=["name", "age"],
+    update={"verified": True}
+)
+
+index.search(
+    query={"name": "John Doe"},
+    sort_by="user_embedding",
+    sort_by_embedding=np.array([1, 2, 3]), # should be normalized and same size as user_embedding
     reversed_sort=True,
     n=10,
     page_no=1,
