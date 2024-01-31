@@ -142,11 +142,11 @@ class DefinedIndex:
                 np.array(integer_id_batch, dtype=np.int64),
             )
 
-    def __get_scores_and_integer_ids_table_name(self, query_embedding, key_name):
-        query_embedding = np.array(query_embedding, dtype=np.float32).reshape(1, -1)
+    def __get_scores_and_integer_ids_table_name(self, sort_by_embedding, key_name):
+        sort_by_embedding = np.array(sort_by_embedding, dtype=np.float32).reshape(1, -1)
 
         scores, integer_ids = self.__vector_search_indexes[key_name].search(
-            query_embedding, self.__vector_search_indexes[key_name].ntotal
+            sort_by_embedding, self.__vector_search_indexes[key_name].ntotal
         )
 
         with self.__connection as conn:
@@ -427,7 +427,7 @@ class DefinedIndex:
         update=None,
         return_metadata=False,
         metadata_key_name="__meta",
-        query_vector=None,
+        sort_by_embedding=None,
         meta_query={},
     ):
         if page_no is not None:
@@ -442,15 +442,15 @@ class DefinedIndex:
         sorting_by_vector = False
 
         if self.schema.get(sort_by) == "normalized_embedding":
-            if query_vector is None:
-                raise ValueError("query_vector must be provided")
+            if sort_by_embedding is None:
+                raise ValueError("sort_by_embedding must be provided")
 
-            self.__update_vector_search_index(sort_by, len(query_vector))
+            self.__update_vector_search_index(sort_by, len(sort_by_embedding))
 
             sorting_by_vector = True
 
             integer_ids_to_scores_table_name = (
-                self.__get_scores_and_integer_ids_table_name(query_vector, sort_by)
+                self.__get_scores_and_integer_ids_table_name(sort_by_embedding, sort_by)
             )
 
         if not select_keys:
@@ -471,7 +471,7 @@ class DefinedIndex:
             offset=offset,
             select_columns=(
                 ("integer_id", "id", "updated_at")
-                + (() if query_vector is None else ("score",))
+                + (() if sort_by_embedding is None else ("score",))
                 + select_keys
             )
             if not update
@@ -712,35 +712,40 @@ class DefinedIndex:
         return self.__connection.execute(sql_query, sql_params).fetchone()[0]
 
     def create_trigger(
-        self, function, operation="UPDATE", timing="AFTER", on_keys=None, each_row=False
+        self, trigger_name, for_key, function_to_trigger, before_delete=False, after_set=False, before_set=False, for_keys=None
     ):
-        trigger_name = f"{self.name}_{operation.lower()}_trigger"
+        if after_set:
+            operation = "INSERT"
+            timing = "AFTER"
+        elif before_set:
+            operation = "INSERT"
+            timing = "BEFORE"
+        elif before_delete:
+            operation = "DELETE"
+            timing = "BEFORE"
+        else:
+            raise ValueError("before_delete or after_set must be True")
 
-        if operation.upper() not in {"INSERT", "UPDATE", "DELETE"}:
-            raise ValueError("Invalid operation type. Choose: INSERT, UPDATE, DELETE.")
+        if for_keys is None:
+            for_keys = [for_key]
+        
+        for_keys = [self.__co]
+        
+        function_name = f"{trigger_name}_function"
 
-        if timing.upper() not in {"BEFORE", "AFTER"}:
-            raise ValueError("Invalid timing. Choose: BEFORE, AFTER.")
+        with self.__connection as conn:
+            conn.create_function(function_name, 1, function_to_trigger)
 
-        if operation.upper() == "UPDATE" and on_keys is None:
-            raise ValueError(
-                "For UPDATE operation, the affected columns should be specified."
-            )
+            trigger_sql = f"""
+            CREATE TRIGGER IF NOT EXISTS {trigger_name}
+            {timing} {operation} ON {self.name}
 
-        keys_sql = f"OF {','.join(on_keys)}" if on_keys else ""
+            WHEN NEW.
 
-        each_row_sql = "FOR EACH ROW" if each_row else ""
-
-        trigger_sql = f"""
-        CREATE TRIGGER {trigger_name}
-        {timing.upper()} {operation.upper()} {keys_sql} ON {self.name} 
-        {each_row_sql}
-        BEGIN
-          {function};
-        END;
-        """
-
-        self.__connection.execute(trigger_sql)
+            BEGIN
+                {function_name}(NEW.{for_key});
+            END;
+            """
 
     def list_triggers(self, table_name=None):
         if table_name:
