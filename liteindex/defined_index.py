@@ -712,7 +712,14 @@ class DefinedIndex:
         return self.__connection.execute(sql_query, sql_params).fetchone()[0]
 
     def create_trigger(
-        self, trigger_name, for_key, function_to_trigger, before_delete=False, after_set=False, before_set=False, for_keys=None
+        self,
+        trigger_name,
+        for_key,
+        function_to_trigger,
+        before_delete=False,
+        after_set=False,
+        before_set=False,
+        for_keys=None,
     ):
         if after_set:
             operation = "INSERT"
@@ -728,9 +735,9 @@ class DefinedIndex:
 
         if for_keys is None:
             for_keys = [for_key]
-        
+
         for_keys = [self.__co]
-        
+
         function_name = f"{trigger_name}_function"
 
         with self.__connection as conn:

@@ -40,7 +40,7 @@ for query_vector in query_vectors:
         {},
         sort_by="embedding",
         reversed_sort=True,
-        query_vector=query_vector,
+        sort_by_embedding=query_vector,
         select_keys=[],
         return_metadata=True,
         n=1
