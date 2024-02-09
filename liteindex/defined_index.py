@@ -142,7 +142,9 @@ class DefinedIndex:
                 np.array(integer_id_batch, dtype=np.int64),
             )
 
-    def __get_scores_and_integer_ids_table_name(self, sort_by_embedding, key_name):
+    def __get_scores_and_integer_ids_table_name(
+        self, sort_by_embedding, key_name, sort_by_embedding_min_similarity
+    ):
         sort_by_embedding = np.array(sort_by_embedding, dtype=np.float32).reshape(1, -1)
 
         scores, integer_ids = self.__vector_search_indexes[key_name].search(
@@ -159,6 +161,8 @@ class DefinedIndex:
 
             def yield_transaction():
                 for i in range(len(integer_ids[0])):
+                    if scores[0][i] < sort_by_embedding_min_similarity:
+                        break
                     yield (int(integer_ids[0][i]), float(scores[0][i]))
 
             conn.executemany(
@@ -430,6 +434,7 @@ class DefinedIndex:
         return_metadata=False,
         metadata_key_name="__meta",
         sort_by_embedding=None,
+        sort_by_embedding_min_similarity=0,
         meta_query={},
     ):
         if page_no is not None:
@@ -452,7 +457,9 @@ class DefinedIndex:
             sorting_by_vector = True
 
             integer_ids_to_scores_table_name = (
-                self.__get_scores_and_integer_ids_table_name(sort_by_embedding, sort_by)
+                self.__get_scores_and_integer_ids_table_name(
+                    sort_by_embedding, sort_by, sort_by_embedding_min_similarity
+                )
             )
 
         if select_keys is None:
