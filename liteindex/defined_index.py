@@ -109,38 +109,47 @@ class DefinedIndex:
 
             self.__vector_indexes_last_updated_at[for_key] = 0
 
+        newest_updated_at_time = self.__connection.execute(
+            f"SELECT MAX(updated_at) FROM {self.name}"
+        ).fetchone()[0]
+
+        if newest_updated_at_time is None:
+            return
+
+        if self.__vector_indexes_last_updated_at[for_key] >= newest_updated_at_time:
+            return
+
         embeddings_batch = []
         integer_id_batch = []
-        batch_len = 0
 
-        for _id, _data in self.search(
-            query={for_key: {"$ne": None}},
-            return_metadata=True,
-            select_keys=[for_key],
-            meta_query={
-                "integer_id": {"$gte": self.__vector_indexes_last_updated_at[for_key]}
-            },
-        ).items():
-            self.__vector_indexes_last_updated_at[for_key] = time.time()
+        for __row in self.__connection.execute(
+            f"SELECT integer_id, {for_key} FROM {self.name} WHERE updated_at >= {self.__vector_indexes_last_updated_at[for_key]} AND updated_at <= {newest_updated_at_time} AND {for_key} IS NOT NULL"
+        ):
+            embeddings_batch.append(__row[1])
+            integer_id_batch.append(__row[0])
 
-            embeddings_batch.append(_data[for_key])
-            integer_id_batch.append(_data["__meta"]["integer_id"])
-            batch_len += 1
-
-            if batch_len >= 10000:
+            if len(integer_id_batch) >= 10000:
                 self.__vector_search_indexes[for_key].add_with_ids(
-                    np.array(embeddings_batch, dtype=np.float32),
+                    np.frombuffer(b"".join(embeddings_batch), dtype=np.float32).reshape(
+                        len(integer_id_batch), dim
+                    ),
                     np.array(integer_id_batch, dtype=np.int64),
                 )
-                batch_len = 0
                 embeddings_batch = []
                 integer_id_batch = []
 
-        if batch_len > 0:
+        if len(integer_id_batch) > 0:
             self.__vector_search_indexes[for_key].add_with_ids(
-                np.array(embeddings_batch, dtype=np.float32),
+                np.frombuffer(b"".join(embeddings_batch), dtype=np.float32).reshape(
+                    len(integer_id_batch), dim
+                ),
                 np.array(integer_id_batch, dtype=np.int64),
             )
+
+            embeddings_batch = []
+            integer_id_batch = []
+
+        self.__vector_indexes_last_updated_at[for_key] = newest_updated_at_time
 
     def __get_scores_and_integer_ids_table_name(
         self, sort_by_embedding, key_name, sort_by_embedding_min_similarity
@@ -151,6 +160,12 @@ class DefinedIndex:
             sort_by_embedding, self.__vector_search_indexes[key_name].ntotal
         )
 
+        integer_ids = integer_ids[0]
+        scores = scores[0]
+
+        scores = scores[scores >= sort_by_embedding_min_similarity].tolist()
+        integer_ids = integer_ids[: len(scores)].tolist()
+
         with self.__connection as conn:
             _temp_name = f"temp_embeds_{uuid.uuid4().hex}"
 
@@ -159,15 +174,9 @@ class DefinedIndex:
             )
             _temp_name = f"temp.{_temp_name}"
 
-            def yield_transaction():
-                for i in range(len(integer_ids[0])):
-                    if scores[0][i] < sort_by_embedding_min_similarity:
-                        break
-                    yield (int(integer_ids[0][i]), float(scores[0][i]))
-
             conn.executemany(
                 f"INSERT INTO {_temp_name} (_integer_id, score) VALUES (?, ?)",
-                yield_transaction(),
+                zip(integer_ids, scores),
             )
 
             return _temp_name

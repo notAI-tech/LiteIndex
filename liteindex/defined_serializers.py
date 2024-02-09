@@ -103,9 +103,7 @@ def serialize_record(schema, record, compressor, _id=None, _updated_at=None):
             _record[k] = None if v is None else json.dumps(v)
 
         elif _type == "normalized_embedding":
-            if v is None:
-                v = None
-            else:
+            if v is not None:
                 try:
                     if v.ndim == 1 and v.dtype == np.float32:
                         v = v.tobytes()
@@ -114,13 +112,7 @@ def serialize_record(schema, record, compressor, _id=None, _updated_at=None):
                 except Exception:
                     raise ValueError("Invalid embedding")
 
-            _record[k] = (
-                None
-                if v is None
-                else compressor.compress(v)
-                if compressor is not False
-                else v
-            )
+            _record[k] = v
 
     return _record
 
@@ -173,12 +165,6 @@ def deserialize_record(schema, record, decompressor):
             _record[k] = None if v is None else json.loads(v)
 
         elif key_type == "normalized_embedding":
-            _record[k] = (
-                None
-                if v is None
-                else np.frombuffer(decompressor.decompress(v), dtype=np.float32)
-                if decompressor is not False
-                else np.frombuffer(v, dtype=np.float32)
-            )
+            _record[k] = None if v is None else np.frombuffer(v, dtype=np.float32)
 
     return _record
