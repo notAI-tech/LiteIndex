@@ -128,7 +128,7 @@ class DefinedIndex:
             batch_len += 1
 
             if batch_len >= 10000:
-                self.__vector_search_indexes[k].add_with_ids(
+                self.__vector_search_indexes[for_key].add_with_ids(
                     np.array(embeddings_batch, dtype=np.float32),
                     np.array(integer_id_batch, dtype=np.int64),
                 )
