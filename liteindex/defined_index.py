@@ -31,6 +31,7 @@ except:
 from .query_parser import (
     search_query,
     distinct_query,
+    distinct_count_query,
     count_query,
     delete_query,
     group_by_query,
@@ -569,6 +570,19 @@ class DefinedIndex:
 
         return {
             _[0] for _ in self.__connection.execute(sql_query, sql_params).fetchall()
+        }
+
+    def distinct_count(self, key, query={}):
+        sql_query, sql_params = distinct_count_query(
+            table_name=self.name,
+            column=key,
+            query={k: v for k, v in query.items()},
+            schema=self.schema,
+        )
+
+        return {
+            _[0]: _[1]
+            for _ in self.__connection.execute(sql_query, sql_params).fetchall()
         }
 
     def group(self, keys, query={}):

@@ -191,6 +191,21 @@ def distinct_query(table_name, column, query, schema):
     return query_str, params
 
 
+def distinct_count_query(table_name, column, query, schema):
+    # Prepare the query
+    where_conditions, params = parse_query(query, schema)
+
+    if schema[column] == "json":
+        query_str = f"SELECT JSON_EXTRACT({column}, '$[*]'), COUNT(*) FROM {table_name}"
+    else:
+        query_str = f"SELECT {column}, COUNT(*) FROM {table_name}"
+    if where_conditions:
+        query_str += f" WHERE {' AND '.join(where_conditions)}"
+    query_str += f" GROUP BY {column}"
+
+    return query_str, params
+
+
 def group_by_query(table_name, columns, query, schema):
     # Prepare the query
     where_conditions, params = parse_query(query, schema)
