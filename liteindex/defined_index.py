@@ -124,27 +124,33 @@ class DefinedIndex:
         integer_id_batch = []
 
         for __row in self.__connection.execute(
-            f"SELECT integer_id, {for_key} FROM {self.name} WHERE updated_at >= {self.__vector_indexes_last_updated_at[for_key]} AND updated_at <= {newest_updated_at_time} AND {for_key} IS NOT NULL"
+            f"SELECT integer_id, {for_key} FROM {self.name} WHERE updated_at > {self.__vector_indexes_last_updated_at[for_key]} AND updated_at <= {newest_updated_at_time} AND {for_key} IS NOT NULL"
         ):
             embeddings_batch.append(__row[1])
             integer_id_batch.append(__row[0])
 
             if len(integer_id_batch) >= 10000:
+                integer_id_batch = np.array(integer_id_batch, dtype=np.int64)
+                self.__vector_search_indexes[for_key].remove_ids(integer_id_batch)
+
                 self.__vector_search_indexes[for_key].add_with_ids(
                     np.frombuffer(b"".join(embeddings_batch), dtype=np.float32).reshape(
                         len(integer_id_batch), dim
                     ),
-                    np.array(integer_id_batch, dtype=np.int64),
+                    integer_id_batch,
                 )
                 embeddings_batch = []
                 integer_id_batch = []
 
         if len(integer_id_batch) > 0:
+            integer_id_batch = np.array(integer_id_batch, dtype=np.int64)
+            self.__vector_search_indexes[for_key].remove_ids(integer_id_batch)
+
             self.__vector_search_indexes[for_key].add_with_ids(
                 np.frombuffer(b"".join(embeddings_batch), dtype=np.float32).reshape(
                     len(integer_id_batch), dim
                 ),
-                np.array(integer_id_batch, dtype=np.int64),
+                integer_id_batch,
             )
 
             embeddings_batch = []
