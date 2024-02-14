@@ -77,18 +77,19 @@ def parse_query(query, schema, prefix=None):
         elif value is None:
             where_conditions.append(f"{column} IS NULL")
         else:
-            if schema[column] == "other":
+            column_type = schema.get(column)
+            if column_type == "other":
                 column = f"__hash_{column}"
                 value = pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
                 value = hash_bytes(value)
-            elif schema[column] == "blob":
+            elif column_type == "blob":
                 column = f"__hash_{column}"
                 value = hash_bytes(value)
-            elif schema[column] == "datetime":
+            elif column_type == "datetime":
                 value = value.timestamp()
-            elif schema[column] == "boolean":
+            elif column_type == "boolean":
                 value = int(value)
-            elif schema[column] == "compressed_string":
+            elif column_type == "compressed_string":
                 value = value.encode()
                 # TODO: Handle compressed strings
                 pass
