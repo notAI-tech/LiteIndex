@@ -159,12 +159,17 @@ class DefinedIndex:
         self.__vector_indexes_last_updated_at[for_key] = newest_updated_at_time
 
     def __get_scores_and_integer_ids_table_name(
-        self, sort_by_embedding, key_name, sort_by_embedding_min_similarity
+        self,
+        sort_by_embedding,
+        key_name,
+        sort_by_embedding_min_similarity,
+        n_results_needed,
     ):
         sort_by_embedding = np.array(sort_by_embedding, dtype=np.float32).reshape(1, -1)
 
         scores, integer_ids = self.__vector_search_indexes[key_name].search(
-            sort_by_embedding, self.__vector_search_indexes[key_name].ntotal
+            sort_by_embedding,
+            min(self.__vector_search_indexes[key_name].ntotal, n_results_needed),
         )
 
         integer_ids = integer_ids[0]
@@ -474,7 +479,10 @@ class DefinedIndex:
 
             integer_ids_to_scores_table_name = (
                 self.__get_scores_and_integer_ids_table_name(
-                    sort_by_embedding, sort_by, sort_by_embedding_min_similarity
+                    sort_by_embedding,
+                    sort_by,
+                    sort_by_embedding_min_similarity,
+                    offset + n,
                 )
             )
 
