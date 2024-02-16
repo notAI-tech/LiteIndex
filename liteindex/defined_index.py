@@ -477,12 +477,18 @@ class DefinedIndex:
 
             sorting_by_vector = True
 
+            n_results_needed = offset if offset else 0
+            if n:
+                n_results_needed += n
+            else:
+                n_results_needed = self.__vector_search_indexes[sort_by].ntotal
+
             integer_ids_to_scores_table_name = (
                 self.__get_scores_and_integer_ids_table_name(
                     sort_by_embedding,
                     sort_by,
                     sort_by_embedding_min_similarity,
-                    offset + n,
+                    n_results_needed,
                 )
             )
 
