@@ -163,13 +163,12 @@ class DefinedIndex:
         sort_by_embedding,
         key_name,
         sort_by_embedding_min_similarity,
-        n_results_needed,
     ):
         sort_by_embedding = np.array(sort_by_embedding, dtype=np.float32).reshape(1, -1)
 
         scores, integer_ids = self.__vector_search_indexes[key_name].search(
             sort_by_embedding,
-            min(self.__vector_search_indexes[key_name].ntotal, n_results_needed),
+            min(self.__vector_search_indexes[key_name].ntotal),
         )
 
         integer_ids = integer_ids[0]
@@ -477,18 +476,11 @@ class DefinedIndex:
 
             sorting_by_vector = True
 
-            n_results_needed = offset if offset else 0
-            if n:
-                n_results_needed += n
-            else:
-                n_results_needed = self.__vector_search_indexes[sort_by].ntotal
-
             integer_ids_to_scores_table_name = (
                 self.__get_scores_and_integer_ids_table_name(
                     sort_by_embedding,
                     sort_by,
-                    sort_by_embedding_min_similarity,
-                    n_results_needed,
+                    sort_by_embedding_min_similarity
                 )
             )
 
