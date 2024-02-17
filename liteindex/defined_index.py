@@ -166,10 +166,20 @@ class DefinedIndex:
     ):
         sort_by_embedding = np.array(sort_by_embedding, dtype=np.float32).reshape(1, -1)
 
-        scores, integer_ids = self.__vector_search_indexes[key_name].search(
-            sort_by_embedding,
-            min(self.__vector_search_indexes[key_name].ntotal),
-        )
+        for try_n in range(1, 11):
+            n_vecs_to_search = max(
+                (self.__vector_search_indexes[key_name].ntotal ** try_n) // 10, 1
+            )
+
+            scores, integer_ids = self.__vector_search_indexes[key_name].search(
+                sort_by_embedding,
+                n_vecs_to_search,
+            )
+
+            if (
+                scores[0][-1] < sort_by_embedding_min_similarity
+            ) or n_vecs_to_search >= self.__vector_search_indexes[key_name].ntotal:
+                break
 
         integer_ids = integer_ids[0]
         scores = scores[0]
@@ -478,9 +488,7 @@ class DefinedIndex:
 
             integer_ids_to_scores_table_name = (
                 self.__get_scores_and_integer_ids_table_name(
-                    sort_by_embedding,
-                    sort_by,
-                    sort_by_embedding_min_similarity
+                    sort_by_embedding, sort_by, sort_by_embedding_min_similarity
                 )
             )
 
@@ -510,13 +518,10 @@ class DefinedIndex:
             )
             if not update
             else ["id"],
+            for_sorting_integer_ids_to_scores_table_name=integer_ids_to_scores_table_name
+            if sorting_by_vector
+            else None,
         )
-
-        if sorting_by_vector:
-            sql_query = sql_query.replace(
-                f"ORDER BY {sort_by}",
-                f"INNER JOIN {integer_ids_to_scores_table_name} ON {self.name}.integer_id = {integer_ids_to_scores_table_name}._integer_id ORDER BY {integer_ids_to_scores_table_name}.score",
-            )
 
         _results = None
 

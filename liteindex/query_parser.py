@@ -147,16 +147,24 @@ def search_query(
     n=None,
     offset=None,
     select_columns=None,
+    for_sorting_integer_ids_to_scores_table_name=None,
 ):
     where_conditions, params = parse_query(query, schema)
 
     selected_columns = ", ".join(select_columns) if select_columns else "*"
 
     query_str = f"SELECT {selected_columns} FROM {table_name}"
+
+    if for_sorting_integer_ids_to_scores_table_name:
+        query_str += f" INNER JOIN {for_sorting_integer_ids_to_scores_table_name} ON {table_name}.integer_id = {for_sorting_integer_ids_to_scores_table_name}._integer_id"
+
     if where_conditions:
         query_str += f" WHERE {' AND '.join(where_conditions)}"
     if sort_by:
-        if isinstance(sort_by, list):
+        if for_sorting_integer_ids_to_scores_table_name:
+            query_str += f" ORDER BY {for_sorting_integer_ids_to_scores_table_name}.score {'DESC' if reversed_sort else 'ASC'}"
+
+        elif isinstance(sort_by, list):
             query_str += " ORDER BY "
             sort_list = []
             for sort_item in sort_by:
