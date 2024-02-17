@@ -168,7 +168,7 @@ class DefinedIndex:
 
         for try_n in range(1, 11):
             n_vecs_to_search = max(
-                (self.__vector_search_indexes[key_name].ntotal ** try_n) // 10, 1
+                (self.__vector_search_indexes[key_name].ntotal * try_n) // 10, 1
             )
 
             scores, integer_ids = self.__vector_search_indexes[key_name].search(
