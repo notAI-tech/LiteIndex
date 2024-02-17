@@ -163,12 +163,17 @@ class DefinedIndex:
         sort_by_embedding,
         key_name,
         sort_by_embedding_min_similarity,
+        n_results_to_search=None,
     ):
         sort_by_embedding = np.array(sort_by_embedding, dtype=np.float32).reshape(1, -1)
 
         for try_n in range(1, 11):
-            n_vecs_to_search = max(
-                (self.__vector_search_indexes[key_name].ntotal * try_n) // 10, 1
+            n_vecs_to_search = (
+                max((self.__vector_search_indexes[key_name].ntotal * try_n) // 10, 1)
+                if n_results_to_search is None
+                else min(
+                    n_results_to_search, self.__vector_search_indexes[key_name].ntotal
+                )
             )
 
             scores, integer_ids = self.__vector_search_indexes[key_name].search(
@@ -177,8 +182,10 @@ class DefinedIndex:
             )
 
             if (
-                scores[0][-1] < sort_by_embedding_min_similarity
-            ) or n_vecs_to_search >= self.__vector_search_indexes[key_name].ntotal:
+                (scores[0][-1] < sort_by_embedding_min_similarity)
+                or (n_vecs_to_search >= self.__vector_search_indexes[key_name].ntotal)
+                or (n_results_to_search is not None)
+            ):
                 break
 
         integer_ids = integer_ids[0]
@@ -486,9 +493,17 @@ class DefinedIndex:
 
             sorting_by_vector = True
 
+            n_results_to_search = None
+
+            if n is not None and not query:
+                n_results_to_search = n + (offset or 0)
+
             integer_ids_to_scores_table_name = (
                 self.__get_scores_and_integer_ids_table_name(
-                    sort_by_embedding, sort_by, sort_by_embedding_min_similarity
+                    sort_by_embedding,
+                    sort_by,
+                    sort_by_embedding_min_similarity,
+                    n_results_to_search,
                 )
             )
 
