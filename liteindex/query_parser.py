@@ -200,17 +200,26 @@ def distinct_query(table_name, column, query, schema):
     return query_str, params
 
 
-def distinct_count_query(table_name, column, query, schema):
-    # Prepare the query
+def distinct_count_query(table_name, column, query, schema, min_count=0, top_n=None):
     where_conditions, params = parse_query(query, schema)
 
     if schema[column] == "json":
-        query_str = f"SELECT JSON_EXTRACT({column}, '$[*]'), COUNT(*) FROM {table_name}"
+        query_str = f"SELECT JSON_EXTRACT({column}, '$[*]') AS extracted_column, COUNT(*) AS count FROM {table_name}"
     else:
-        query_str = f"SELECT {column}, COUNT(*) FROM {table_name}"
+        query_str = f"SELECT {column}, COUNT(*) AS count FROM {table_name}"
+
     if where_conditions:
         query_str += f" WHERE {' AND '.join(where_conditions)}"
-    query_str += f" GROUP BY {column}"
+
+    if schema[column] == "json":
+        query_str += " GROUP BY extracted_column"
+    else:
+        query_str += f" GROUP BY {column}"
+
+    query_str += f" HAVING COUNT(*) >= {min_count}"
+
+    if top_n is not None:
+        query_str += f" ORDER BY COUNT(*) DESC LIMIT {top_n}"
 
     return query_str, params
 

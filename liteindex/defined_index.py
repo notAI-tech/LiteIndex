@@ -51,6 +51,27 @@ from .query_parser import (
 import threading
 
 
+def get_defined_index_names_in_db(db_path):
+    with sqlite3.connect(db_path, uri=True) as conn:
+        all_table_names = {
+            _[0]
+            for _ in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table';"
+            ).fetchall()
+        }
+
+        res = []
+        for table_name in all_table_names:
+            if (
+                not table_name.startswith("__")
+                and not table_name.startswith("sqlite_")
+                and f"__{table_name}_meta" in all_table_names
+            ):
+                res.append(table_name)
+
+        return res
+
+
 class DefinedIndex:
     def __init__(
         self, name, schema=None, db_path=None, ram_cache_mb=64, compression_level=-1
@@ -604,12 +625,14 @@ class DefinedIndex:
             _[0] for _ in self.__connection.execute(sql_query, sql_params).fetchall()
         }
 
-    def distinct_count(self, key, query={}):
+    def distinct_count(self, key, query={}, min_count=0, top_n=None):
         sql_query, sql_params = distinct_count_query(
             table_name=self.name,
             column=key,
             query={k: v for k, v in query.items()},
             schema=self.schema,
+            min_count=min_count,
+            top_n=top_n,
         )
 
         return {
@@ -729,12 +752,12 @@ class DefinedIndex:
 
         if key_hashes:
             self.__connection.execute(
-                f"CREATE {'UNIQUE' if is_unique else ''} INDEX IF NOT EXISTS idx_{self.name}_{'_'.join(key_hashes)} ON {self.name} ({','.join(key_hashes)})"
+                f"""CREATE {'UNIQUE' if is_unique else ''} INDEX IF NOT EXISTS "idx_{self.name}_{'_'.join(key_hashes)}" ON {self.name} ({','.join(['"' + _ + '"' for _ in key_hashes])})"""
             )
 
             for size_hash in size_hashes:
                 self.__connection.execute(
-                    f"CREATE INDEX IF NOT EXISTS idx_{self.name}_{size_hash} ON {self.name} ({size_hash})"
+                    f"""CREATE INDEX IF NOT EXISTS "idx_{self.name}_{size_hash}" ON {self.name} ({size_hash})"""
                 )
 
             self.__connection.commit()
