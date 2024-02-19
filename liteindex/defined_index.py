@@ -568,7 +568,7 @@ class DefinedIndex:
 
             update_columns = ", ".join([f'"{h}" = ?' for h in update.keys()])
 
-            sql_query = f"UPDATE {self.name} SET {update_columns} WHERE id IN ({sql_query}) RETURNING {', '.join(('integer_id', 'id', 'updated_at') + select_keys)}"
+            sql_query = f"""UPDATE {self.name} SET {update_columns} WHERE id IN ({sql_query}) RETURNING {', '.join(('integer_id', 'id', 'updated_at') + tuple('"' + __ + '"' for __ in select_keys))}"""
 
             sql_params = [_ for _ in update.values()] + sql_params
 

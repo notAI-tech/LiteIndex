@@ -26,7 +26,7 @@ def parse_query(query, schema, prefix=None):
             sub_conditions = []
             for sub_key, sub_value in value.items():
                 if sub_value is None and sub_key == "$ne":
-                    sub_conditions.append(f"{column} IS NOT NULL")
+                    sub_conditions.append(f'"{column}" IS NOT NULL')
 
                 elif sub_key in ["$ne", "$like", "$gt", "$lt", "$gte", "$lte"]:
                     operator = {
@@ -44,17 +44,17 @@ def parse_query(query, schema, prefix=None):
                             f"JSON_EXTRACT({column}, '$[*]') {operator} ?"
                         )
                     else:
-                        sub_conditions.append(f"{column} {operator} ?")
+                        sub_conditions.append(f'"{column}" {operator} ?')
 
                     params.append(sub_value)
                 elif sub_key == "$in":
                     sub_conditions.append(
-                        f"{column} IN ({', '.join(['?' for _ in sub_value])})"
+                        f""""{column}" IN ({', '.join(['?' for _ in sub_value])})"""
                     )
                     params.extend(sub_value)
                 elif sub_key == "$nin":
                     sub_conditions.append(
-                        f"{column} NOT IN ({', '.join(['?' for _ in sub_value])})"
+                        f""""{column}" NOT IN ({', '.join(['?' for _ in sub_value])})"""
                     )
                     params.extend(sub_value)
                 else:
@@ -70,12 +70,12 @@ def parse_query(query, schema, prefix=None):
                 params.extend(json.dumps(val) for val in value)
             else:
                 where_conditions.append(
-                    f"{column} IN ({', '.join(['?' for _ in value])})"
+                    f""""{column}" IN ({', '.join(['?' for _ in value])})"""
                 )
                 params.extend(value)
 
         elif value is None:
-            where_conditions.append(f"{column} IS NULL")
+            where_conditions.append(f'"{column}" IS NULL')
         else:
             column_type = schema.get(column)
             if column_type == "other":
@@ -94,7 +94,7 @@ def parse_query(query, schema, prefix=None):
                 # TODO: Handle compressed strings
                 pass
 
-            where_conditions.append(f"{column} = ?")
+            where_conditions.append(f'"{column}" = ?')
             params.append(value)
 
     for key, value in query.items():
@@ -151,7 +151,9 @@ def search_query(
 ):
     where_conditions, params = parse_query(query, schema)
 
-    selected_columns = ", ".join(select_columns) if select_columns else "*"
+    selected_columns = (
+        ", ".join([f'"{_}"' for _ in select_columns]) if select_columns else "*"
+    )
 
     query_str = f"SELECT {selected_columns} FROM {table_name}"
 
@@ -170,15 +172,17 @@ def search_query(
             for sort_item in sort_by:
                 if isinstance(sort_item, tuple):
                     sort_list.append(
-                        f"{sort_item[0]} {'DESC' if sort_item[1] else 'ASC'}"
+                        f""""{sort_item[0]}" {'DESC' if sort_item[1] else 'ASC'}"""
                     )
                 else:
                     sort_list.append(
-                        f"{sort_item} {'DESC' if reversed_sort else 'ASC'}"
+                        f""""{sort_item}" {'DESC' if reversed_sort else 'ASC'}"""
                     )
             query_str += ", ".join(sort_list)
         else:
-            query_str += f" ORDER BY {sort_by} {'DESC' if reversed_sort else 'ASC'}"
+            query_str += (
+                f""" ORDER BY "{sort_by}" {'DESC' if reversed_sort else 'ASC'}"""
+            )
 
     query_str += f" LIMIT {n if n is not None else -1} OFFSET {offset if offset is not None else 0}"
 
