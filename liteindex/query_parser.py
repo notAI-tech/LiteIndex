@@ -292,7 +292,7 @@ def sum_query(table_name, column, query, schema):
     where_conditions, params = parse_query(query, schema)
 
     # Build the query string
-    query_str = f"SELECT SUM({column}) FROM {table_name}"
+    query_str = f'SELECT SUM("{column}") FROM {table_name}'
     if where_conditions:
         query_str += f" WHERE {' AND '.join(where_conditions)}"
 
@@ -309,7 +309,7 @@ def avg_query(table_name, column, query, schema):
     where_conditions, params = parse_query(query, schema)
 
     # Build the query string
-    query_str = f"SELECT AVG({column}) FROM {table_name}"
+    query_str = f'SELECT AVG("{column}") FROM {table_name}'
     if where_conditions:
         query_str += f" WHERE {' AND '.join(where_conditions)}"
 
@@ -324,7 +324,7 @@ def min_query(table_name, column, query, schema):
     where_conditions, params = parse_query(query, schema)
 
     # Build the query string
-    query_str = f"SELECT MIN({column}) FROM {table_name}"
+    query_str = f'SELECT MIN("{column}") FROM {table_name}'
     if where_conditions:
         query_str += f" WHERE {' AND '.join(where_conditions)}"
 
@@ -339,7 +339,7 @@ def max_query(table_name, column, query, schema):
     where_conditions, params = parse_query(query, schema)
 
     # Build the query string
-    query_str = f"SELECT MAX({column}) FROM {table_name}"
+    query_str = f'SELECT MAX("{column}") FROM {table_name}'
     if where_conditions:
         query_str += f" WHERE {' AND '.join(where_conditions)}"
 
@@ -347,37 +347,49 @@ def max_query(table_name, column, query, schema):
 
 
 def plus_equals_query(table_name, column, value):
-    query_str = f"UPDATE {table_name} SET {column} = {column} + ? WHERE {column} = ?"
+    query_str = (
+        f'UPDATE {table_name} SET "{column}" = "{column}" + ? WHERE {column} = ?'
+    )
     params = (value, column)
     return query_str, params
 
 
 def minus_equals_query(table_name, column, value):
-    query_str = f"UPDATE {table_name} SET {column} = {column} - ? WHERE {column} = ?"
+    query_str = (
+        f'UPDATE {table_name} SET "{column}" = "{column}" - ? WHERE "{column}" = ?'
+    )
     params = (value, column)
     return query_str, params
 
 
 def multiply_equals_query(table_name, column, value):
-    query_str = f"UPDATE {table_name} SET {column} = {column} * ? WHERE {column} = ?"
+    query_str = (
+        f'UPDATE {table_name} SET "{column}" = "{column}" * ? WHERE "{column}" = ?'
+    )
     params = (value, column)
     return query_str, params
 
 
 def divide_equals_query(table_name, column, value):
-    query_str = f"UPDATE {table_name} SET {column} = {column} / ? WHERE {column} = ?"
+    query_str = (
+        f'UPDATE {table_name} SET "{column}" = "{column}" / ? WHERE "{column}" = ?'
+    )
     params = (value, column)
     return query_str, params
 
 
 def floor_divide_equals_query(table_name, column, value):
-    query_str = f"UPDATE {table_name} SET {column} = {column} // ? WHERE {column} = ?"
+    query_str = (
+        f'UPDATE {table_name} SET "{column}" = "{column}" // ? WHERE "{column}" = ?'
+    )
     params = (value, column)
     return query_str, params
 
 
 def modulo_equals_query(table_name, column, value):
-    query_str = f"UPDATE {table_name} SET {column} = {column} % ? WHERE {column} = ?"
+    query_str = (
+        f'UPDATE {table_name} SET "{column}" = "{column}" % ? WHERE "{column}" = ?'
+    )
     params = (value, column)
     return query_str, params
 
