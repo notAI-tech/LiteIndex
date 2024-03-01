@@ -11,7 +11,7 @@ from liteindex import DefinedIndex, DefinedTypes
 index = DefinedIndex(
                     "test_vetors",
                     schema = {
-                        "embedding": DefinedTypes.normalized_embedding
+                        "emb edding": DefinedTypes.normalized_embedding
                     }
                 )
 
@@ -21,7 +21,7 @@ onnx_model = OnnxClip(batch_size=1)
 
 query_vectors = []
 
-for f in tqdm(glob(f"{sys.argv[1]}/*")):
+for f in tqdm(glob(f"{sys.argv[1]}/*")[:5]):
     if os.path.splitext(f)[-1].lower() in {".png", ".jpg", ".jpeg"}:
         embedding = onnx_model.get_image_embeddings([Image.open(f).convert("RGB")])[0]
         embedding = embedding / np.linalg.norm(embedding)
@@ -30,7 +30,7 @@ for f in tqdm(glob(f"{sys.argv[1]}/*")):
         index.update(
             {
                 f: {
-                    "embedding": embedding,
+                    "emb edding": embedding,
                 }
             }
         )
@@ -38,7 +38,7 @@ for f in tqdm(glob(f"{sys.argv[1]}/*")):
 for query_vector in query_vectors:
     results = index.search(
         {},
-        sort_by="embedding",
+        sort_by="emb edding",
         reversed_sort=True,
         sort_by_embedding=query_vector,
         select_keys=[],

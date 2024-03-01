@@ -132,7 +132,7 @@ class DefinedIndex:
             self.__vector_indexes_last_updated_at[for_key] = 0
 
         newest_updated_at_time = self.__connection.execute(
-            f"SELECT MAX(updated_at) FROM {self.name}"
+            f'''SELECT MAX(updated_at) FROM "{self.name}"'''
         ).fetchone()[0]
 
         if newest_updated_at_time is None:
@@ -145,7 +145,7 @@ class DefinedIndex:
         integer_id_batch = []
 
         for __row in self.__connection.execute(
-            f"SELECT integer_id, {for_key} FROM {self.name} WHERE updated_at > {self.__vector_indexes_last_updated_at[for_key]} AND updated_at <= {newest_updated_at_time} AND {for_key} IS NOT NULL"
+            f"""SELECT integer_id, "{for_key}" FROM "{self.name}" WHERE updated_at > {self.__vector_indexes_last_updated_at[for_key]} AND updated_at <= {newest_updated_at_time} AND "{for_key}" IS NOT NULL"""
         ):
             embeddings_batch.append(__row[1])
             integer_id_batch.append(__row[0])
@@ -219,12 +219,12 @@ class DefinedIndex:
             _temp_name = f"temp_embeds_{uuid.uuid4().hex}"
 
             conn.execute(
-                f"CREATE TEMP TABLE {_temp_name} (_integer_id INTEGER PRIMARY KEY, score NUMBER)"
+                f"""CREATE TEMP TABLE {_temp_name} (_integer_id INTEGER PRIMARY KEY, score NUMBER)"""
             )
             _temp_name = f"temp.{_temp_name}"
 
             conn.executemany(
-                f"INSERT INTO {_temp_name} (_integer_id, score) VALUES (?, ?)",
+                f"""INSERT INTO {_temp_name} (_integer_id, score) VALUES (?, ?)""",
                 zip(integer_ids, scores),
             )
 
@@ -288,7 +288,7 @@ class DefinedIndex:
     def __validate_set_schema_if_exists(self):
         try:
             rows = self.__connection.execute(
-                f"SELECT * FROM {self.__meta_table_name}"
+                f'''SELECT * FROM "{self.__meta_table_name}"'''
             ).fetchall()
         except:
             return
@@ -339,21 +339,19 @@ class DefinedIndex:
 
         with self.__connection:
             self.__connection.execute(
-                f"CREATE TABLE IF NOT EXISTS {self.name} (integer_id INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE, updated_at NUMBER, {columns_str})"
+                f"""CREATE TABLE IF NOT EXISTS "{self.name}" (integer_id INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE, updated_at NUMBER, {columns_str})"""
             )
 
             self.__connection.execute(
-                f"CREATE INDEX IF NOT EXISTS idx_{self.name}_updated_at ON {self.name} (updated_at)"
+                f"""CREATE INDEX IF NOT EXISTS "idx_{self.name}_updated_at" ON "{self.name}" (updated_at)"""
             )
 
             self.__connection.execute(
-                f"CREATE TABLE IF NOT EXISTS {self.__meta_table_name} "
-                "(key TEXT PRIMARY KEY, value_type TEXT)"
+                f"""CREATE TABLE IF NOT EXISTS "{self.__meta_table_name}" (key TEXT PRIMARY KEY, value_type TEXT)"""
             )
 
             self.__connection.executemany(
-                f"INSERT OR IGNORE INTO {self.__meta_table_name} (key, value_type) "
-                f"VALUES (?, ?)",
+                f"""INSERT OR IGNORE INTO "{self.__meta_table_name}" (key, value_type) VALUES (?, ?)""",
                 [(key, value_type) for key, value_type in meta_columns],
             )
 
@@ -470,14 +468,16 @@ class DefinedIndex:
     def clear(self):
         # CLEAR function: deletes the content of the table but keeps the table itself and the metadata table
         with self.__connection:
-            self.__connection.execute(f"DROP TABLE IF EXISTS {self.name}")
+            self.__connection.execute(f'''DROP TABLE IF EXISTS "{self.name}"''')
             self.__create_table_and_meta_table()
 
     def drop(self):
         # DROP function: deletes both the table itself and the metadata table
         with self.__connection:
-            self.__connection.execute(f"DROP TABLE IF EXISTS {self.name}")
-            self.__connection.execute(f"DROP TABLE IF EXISTS {self.__meta_table_name}")
+            self.__connection.execute(f'''DROP TABLE IF EXISTS "{self.name}"''')
+            self.__connection.execute(
+                f'''DROP TABLE IF EXISTS "{self.__meta_table_name}"'''
+            )
 
     def search(
         self,
@@ -580,7 +580,7 @@ class DefinedIndex:
 
         if sorting_by_vector:
             self.__connection.execute(
-                f"DROP TABLE IF EXISTS {integer_ids_to_scores_table_name}"
+                f'''DROP TABLE IF EXISTS "{integer_ids_to_scores_table_name}"'''
             )
 
         results = {}
@@ -670,7 +670,7 @@ class DefinedIndex:
                         self.__decompressor,
                     )
                     for row in self.__connection.execute(
-                        f"DELETE FROM {self.name} WHERE id IN ({', '.join(['?' for _ in ids])}) RETURNING *",
+                        f"""DELETE FROM "{self.name}" WHERE id IN ({', '.join(['?' for _ in ids])}) RETURNING *""",
                         ids,
                     ).fetchall()
                 }
@@ -719,7 +719,7 @@ class DefinedIndex:
                 ids = [ids]
 
             placeholders = ", ".join(["?" for _ in ids])
-            sql_query = f"DELETE FROM {self.name} WHERE id IN ({placeholders})"
+            sql_query = f"""DELETE FROM "{self.name}" WHERE id IN ({placeholders})"""
             self.__connection.execute(sql_query, ids)
             self.__connection.commit()
         else:
@@ -757,7 +757,7 @@ class DefinedIndex:
 
             for size_hash in size_hashes:
                 self.__connection.execute(
-                    f"""CREATE INDEX IF NOT EXISTS "idx_{self.name}_{size_hash}" ON {self.name} ({size_hash})"""
+                    f"""CREATE INDEX IF NOT EXISTS "idx_{self.name}_{size_hash}" ON "{self.name}" ({size_hash})"""
                 )
 
             self.__connection.commit()
@@ -768,7 +768,7 @@ class DefinedIndex:
             for k, v in {
                 _[1].replace(f"idx_{self.name}_", ""): {"is_unique": bool(_[2])}
                 for _ in self.__connection.execute(
-                    f"PRAGMA index_list({self.name})"
+                    f"""PRAGMA index_list("{self.name}")"""
                 ).fetchall()
                 if _[1].startswith(f"idx_{self.name}_")
             }.items()
@@ -843,20 +843,6 @@ class DefinedIndex:
                 {function_name}(NEW.{for_key});
             END;
             """
-
-    def list_triggers(self, table_name=None):
-        if table_name:
-            result = self.__connection.execute(
-                f"SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = '{table_name}';"
-            )
-        else:
-            result = self.__connection.execute(
-                f"SELECT name FROM sqlite_master WHERE type = 'trigger';"
-            )
-        return result.fetchall()
-
-    def delete_trigger(self, trigger_name):
-        self.__connection.execute(f"DROP TRIGGER {trigger_name};")
 
     def vaccum(self):
         self.__connection.execute("VACUUM")
