@@ -22,11 +22,24 @@ try:
 except:
     zstandard = None
 
-try:
-    import faiss
-    import numpy as np
-except:
-    faiss = None
+faiss = None
+np = None
+
+
+def _import_faiss():
+    global faiss
+    global np
+
+    try:
+        import faiss
+    except:
+        faiss = None
+
+    try:
+        import numpy as np
+    except:
+        np = None
+
 
 from .query_parser import (
     search_query,
@@ -73,6 +86,22 @@ def get_defined_index_names_in_db(db_path):
 
 
 class DefinedIndex:
+    class Type:
+        string = defined_serializers.DefinedTypes.string
+        number = defined_serializers.DefinedTypes.number
+        json = defined_serializers.DefinedTypes.json
+        blob = defined_serializers.DefinedTypes.blob
+        other = defined_serializers.DefinedTypes.other
+        normalized_embedding = defined_serializers.DefinedTypes.normalized_embedding
+
+    class MetaKey:
+        updated_at = "updated_at"
+        integer_id = "integer_id"
+        id = "id"
+
+    class Key:
+        pass
+
     def __init__(
         self, name, schema=None, db_path=None, ram_cache_mb=64, compression_level=-1
     ):
@@ -119,6 +148,9 @@ class DefinedIndex:
         self.__meta_schema["integer_id"] = "number"
 
     def __update_vector_search_index(self, for_key, dim=None):
+        if faiss is None:
+            _import_faiss()
+
         if for_key not in self.__vector_indexes_last_updated_at:
             try:
                 self.__vector_search_indexes[for_key] = faiss.IndexIDMap(
@@ -312,6 +344,7 @@ class DefinedIndex:
 
     def __parse_schema(self):
         for _i, (key, value_type) in enumerate(self.schema.items()):
+            setattr(self.Key, key, key)
             if value_type not in defined_serializers.schema_property_to_column_type:
                 raise ValueError(f"Invalid schema property: {value_type}")
 

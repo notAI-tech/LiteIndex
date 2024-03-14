@@ -1,6 +1,6 @@
 #### Example schema
 
-python
+```python
 schema = {
     "name": "string",
     "age": "number",
@@ -8,10 +8,12 @@ schema = {
     "verified": "boolean",
     "birthday": "datetime",
     "address": "json",
+    "friend_ids": "list",
     "profile_picture": "blob",
-    "description": "compressed_string",
-    "tag_line_embedding": "other"
+    "description": "string",
+    "description_embedding": "normalized_embedding",
 }
+```
 
 
 - The query language is a subset of MongoDB's query language
@@ -42,7 +44,18 @@ schema = {
 | {"profile_picture": {"$gt": b"......"}}         | profile_picture > b"......"                                                                                |
 
 
-#### Example of regex queries on string
+#### Example of json queries
+
+| Query                                | Explanation                                                                                                |
+|--------------------------------------------------|------------------------------------------------------------------------------------------------------------|
+| {"address": {"city": "New York"}}                | address.city == "New York"                                                                                 |
+| {"address": {"city": {"$in": ["New York", "San Francisco"]}}} | address.city in ["New York", "San Francisco"] |
+| {"address": {"city": {"$ne": "New York"}}}       | address.city != "New York"                                                                                 |
+| {"address": {"$contains": ["city", "state"]}}    | address contains "city" and "state"                                                                         |
+| {"address": {"city": "New York", "state": "NY"}} | address.city == "New York" and address.state == "NY"                                                      |
+| {"address": {"city": {"$or": ["New York", "San Francisco"]}}} | address.city == "New York" or address.city == "San Francisco" |
+| {"friend_ids": {"$contains": "123"}}               | friend_ids contains "123"                                                                                     |
+| {"friend_ids": {"$contains": ["123", "456"]}}       | friend_ids contains "123" and "456"                                                                           |
 
 
 

@@ -5,6 +5,7 @@ import os
 import sys
 import numpy as np
 from tqdm import tqdm
+import random
 
 from liteindex import DefinedIndex, DefinedTypes
 
@@ -41,7 +42,7 @@ for query_vector in query_vectors:
         sort_by="emb edding",
         reversed_sort=True,
         sort_by_embedding=query_vector,
-        select_keys=[],
+        select_keys=["for_filter_test"],
         return_metadata=True,
         n=1
     )

@@ -22,11 +22,17 @@ def parse_query(query, schema, prefix=None):
             else prefix[0]
         )
 
+        column_type = schema.get(column)
+
         if isinstance(value, dict):
             sub_conditions = []
             for sub_key, sub_value in value.items():
                 if sub_value is None and sub_key == "$ne":
-                    sub_conditions.append(f'"{column}" IS NOT NULL')
+                    sub_conditions.append(
+                        f'"{column}" IS NOT NULL'
+                        if column_type is not None
+                        else f"{column} IS NOT NULL"
+                    )
 
                 elif sub_key in ["$ne", "$like", "$gt", "$lt", "$gte", "$lte"]:
                     operator = {
@@ -44,17 +50,26 @@ def parse_query(query, schema, prefix=None):
                             f"JSON_EXTRACT({column}, '$[*]') {operator} ?"
                         )
                     else:
-                        sub_conditions.append(f'"{column}" {operator} ?')
+                        sub_conditions.append(
+                            f'"{column}" {operator} ?'
+                            if column_type is not None
+                            else f"{column} {operator} ?"
+                        )
 
                     params.append(sub_value)
                 elif sub_key == "$in":
                     sub_conditions.append(
                         f""""{column}" IN ({', '.join(['?' for _ in sub_value])})"""
+                        if column_type is not None
+                        else f"{column} IN ({', '.join(['?' for _ in sub_value])})"
                     )
+
                     params.extend(sub_value)
                 elif sub_key == "$nin":
                     sub_conditions.append(
                         f""""{column}" NOT IN ({', '.join(['?' for _ in sub_value])})"""
+                        if column_type is not None
+                        else f"{column} NOT IN ({', '.join(['?' for _ in sub_value])})"
                     )
                     params.extend(sub_value)
                 else:
@@ -65,6 +80,7 @@ def parse_query(query, schema, prefix=None):
         elif isinstance(value, list):
             if schema[prefix[0]] == "json":
                 json_conditions = [f"JSON_CONTAINS({column}, ?)" for _ in value]
+
                 # Add parentheses around the OR condition
                 where_conditions.append(f"({ ' OR '.join(json_conditions) })")
                 params.extend(json.dumps(val) for val in value)
@@ -77,7 +93,6 @@ def parse_query(query, schema, prefix=None):
         elif value is None:
             where_conditions.append(f'"{column}" IS NULL')
         else:
-            column_type = schema.get(column)
             if column_type == "other":
                 column = f"__hash_{column}"
                 value = pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
@@ -94,7 +109,9 @@ def parse_query(query, schema, prefix=None):
                 # TODO: Handle compressed strings
                 pass
 
-            where_conditions.append(f'"{column}" = ?')
+            where_conditions.append(
+                f'"{column}" = ?' if column_type is not None else f"{column} = ?"
+            )
             params.append(value)
 
     for key, value in query.items():
