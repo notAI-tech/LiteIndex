@@ -91,7 +91,7 @@ def parse_query(query, schema, prefix=None):
                 params.extend(value)
 
         elif value is None:
-            where_conditions.append(f'"{column}" IS NULL')
+            where_conditions.append(f'"{column}" IS NULL' if column_type is not None else f"{column} IS NULL")
         else:
             if column_type == "other":
                 column = f"__hash_{column}"
