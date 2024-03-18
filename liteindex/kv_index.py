@@ -495,8 +495,26 @@ class KVIndex:
         return results
 
     def math(self, key, value, op):
-        ops = {"+": "+", "-": "-", "*": "*", "/": "/", "//": "//", "%": "%", "**": "**"}
-        pass
+        ops = {
+            "+=": "+",
+            "-=": "-",
+            "*=": "*",
+            "/=": "/",
+            "%=": "%"
+        }
+
+        if op not in ops:
+            raise ValueError(f"Unsupported operation: {op}")
+
+        sql_query = f"UPDATE kv_index SET num_value = num_value {ops[op]} ? WHERE key_hash = ? RETURNING num_value"
+
+        with self.__connection as conn:
+            row = conn.execute(sql_query, (value, self.__encode_and_hash(key)[0])).fetchone()
+                
+            if row is None:
+                raise KeyError
+
+            return row[0]
 
     def __run_eviction(self, conn):
         if self.eviction.policy == EvictionCfg.EvictNone:
