@@ -87,11 +87,14 @@ def get_defined_index_names_in_db(db_path):
 
 class DefinedIndex:
     class Type:
-        string = defined_serializers.DefinedTypes.string
         number = defined_serializers.DefinedTypes.number
-        json = defined_serializers.DefinedTypes.json
+        string = defined_serializers.DefinedTypes.string
+        boolean = defined_serializers.DefinedTypes.boolean
+        datetime = defined_serializers.DefinedTypes.datetime
+        compressed_string = defined_serializers.DefinedTypes.compressed_string
         blob = defined_serializers.DefinedTypes.blob
         other = defined_serializers.DefinedTypes.other
+        json = defined_serializers.DefinedTypes.json
         normalized_embedding = defined_serializers.DefinedTypes.normalized_embedding
 
     class MetaKey:
@@ -103,7 +106,7 @@ class DefinedIndex:
         pass
 
     def __init__(
-        self, name, schema=None, db_path=None, ram_cache_mb=64, compression_level=-1
+        self, name, schema=None, db_path=None, ram_cache_mb=64, compression_level=None
     ):
         if sqlite3.sqlite_version < "3.35.0":
             raise ValueError(
