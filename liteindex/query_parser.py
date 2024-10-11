@@ -43,10 +43,9 @@ def parse_query(query, schema, prefix=None):
                         "$lte": "<=",
                     }[sub_key]
 
-                    # Handle the case for JSON columns with "$like" operator
                     if schema[prefix[0]] == "json" and sub_key == "$like":
                         sub_conditions.append(
-                            f"JSON_EXTRACT({column}, '$[*]') {operator} ?"
+                            f"EXISTS(SELECT 1 FROM json_each({column}) WHERE value {operator} ?)"
                         )
                     else:
                         if sub_key == "$ne":
@@ -64,19 +63,37 @@ def parse_query(query, schema, prefix=None):
 
                     params.append(sub_value)
                 elif sub_key == "$in":
-                    sub_conditions.append(
-                        f"""("{column}" IN ({', '.join(['?' for _ in sub_value])}) OR "{column}" IS NULL)"""
-                        if column_type is not None
-                        else f"({column} IN ({', '.join(['?' for _ in sub_value])}) OR {column} IS NULL)"
-                    )
-                    params.extend(sub_value)
+                    if schema[prefix[0]] == "json":
+                        json_conditions = []
+                        for val in sub_value:
+                            json_conditions.append(
+                                f"EXISTS(SELECT 1 FROM json_each({column}) WHERE value = ?)"
+                            )
+                            params.append(val)
+                        sub_conditions.append(f"({ ' OR '.join(json_conditions) })")
+                    else:
+                        sub_conditions.append(
+                            f"""("{column}" IN ({', '.join(['?' for _ in sub_value])}) OR "{column}" IS NULL)"""
+                            if column_type is not None
+                            else f"({column} IN ({', '.join(['?' for _ in sub_value])}) OR {column} IS NULL)"
+                        )
+                        params.extend(sub_value)
                 elif sub_key == "$nin":
-                    sub_conditions.append(
-                        f"""("{column}" NOT IN ({', '.join(['?' for _ in sub_value])}) OR "{column}" IS NULL)"""
-                        if column_type is not None
-                        else f"({column} NOT IN ({', '.join(['?' for _ in sub_value])}) OR {column} IS NULL)"
-                    )
-                    params.extend(sub_value)
+                    if schema[prefix[0]] == "json":
+                        json_conditions = []
+                        for val in sub_value:
+                            json_conditions.append(
+                                f"NOT EXISTS(SELECT 1 FROM json_each({column}) WHERE value = ?)"
+                            )
+                            params.append(val)
+                        sub_conditions.append(f"({ ' AND '.join(json_conditions) })")
+                    else:
+                        sub_conditions.append(
+                            f"""("{column}" NOT IN ({', '.join(['?' for _ in sub_value])}) OR "{column}" IS NULL)"""
+                            if column_type is not None
+                            else f"({column} NOT IN ({', '.join(['?' for _ in sub_value])}) OR {column} IS NULL)"
+                        )
+                        params.extend(sub_value)
                 else:
                     process_nested_query(sub_value, prefix + [sub_key])
             if sub_conditions:
@@ -84,9 +101,13 @@ def parse_query(query, schema, prefix=None):
 
         elif isinstance(value, list):
             if schema[prefix[0]] == "json":
-                json_conditions = [f"JSON_CONTAINS({column}, ?)" for _ in value]
+                json_conditions = []
+                for val in value:
+                    json_conditions.append(
+                        f"EXISTS(SELECT 1 FROM json_each({column}) WHERE value = ?)"
+                    )
+                    params.append(json.dumps(val))
                 where_conditions.append(f"({ ' OR '.join(json_conditions) })")
-                params.extend(json.dumps(val) for val in value)
             else:
                 where_conditions.append(
                     f"""("{column}" IN ({', '.join(['?' for _ in value])}) OR "{column}" IS NULL)"""
@@ -94,11 +115,18 @@ def parse_query(query, schema, prefix=None):
                 params.extend(value)
 
         elif value is None:
-            where_conditions.append(
-                f'"{column}" IS NULL'
-                if column_type is not None
-                else f"{column} IS NULL"
-            )
+            if len(prefix) > 1:
+                json_column = prefix[0]
+                json_path = ".".join(prefix[1:])
+                where_conditions.append(
+                    f"""(json_type({json_column}, '$.{json_path}') IS NOT NULL AND json_extract({json_column}, '$.{json_path}') IS NULL)"""
+                )
+            else:
+                where_conditions.append(
+                    f'"{column}" IS NULL'
+                    if column_type is not None
+                    else f"{column} IS NULL"
+                )
         else:
             if column_type == "other":
                 column = f"__hash_{column}"

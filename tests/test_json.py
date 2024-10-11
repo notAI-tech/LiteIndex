@@ -49,8 +49,16 @@ index.update(
     }
 )
 
-print(index.search({"json_key": {"a": 1}}))
-print(index.search({"json_key": {"a": None}}))
-print(index.search({"json_key": {"a": {"$gte": 1}}}))
-print(index.search({"json_key": {"a": {"$in": [-1, 99]}}}))
-# print(index.search({"json_key": ["c"]}))
+# print(index.search({"json_key": {"$in": ["a", "c"]}}))
+
+assert list(index.search({"json_key": {"a": 1}}).keys()) == ["k1"]
+
+assert list(index.search({"json_key": {"a": None}}).keys()) == ["k4"]
+
+assert list(index.search({"json_key": {"a": {"$gte": 1}}}).keys()) == ["k1", "k2", "k5"]
+
+# assert list(index.search({"json_key": {"a": {"$in": [-1, 99]}}}).keys()) == []
+
+assert list(index.search({"json_key": {"a": {"$ne": 1}}}).keys()) == ["k2", "k3", "k4", "k5"]
+
+assert list(index.search({"json_key": {"a": {"$ne": None}}}).keys()) == ["k1", "k2", "k5"]
