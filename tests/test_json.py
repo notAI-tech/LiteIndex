@@ -62,3 +62,5 @@ assert list(index.search({"json_key": {"a": {"$gte": 1}}}).keys()) == ["k1", "k2
 assert list(index.search({"json_key": {"a": {"$ne": 1}}}).keys()) == ["k2", "k3", "k4", "k5"]
 
 assert list(index.search({"json_key": {"a": {"$ne": None}}}).keys()) == ["k1", "k2", "k5"]
+
+print(index.distinct("json_key"))
