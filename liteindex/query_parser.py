@@ -246,9 +246,16 @@ def distinct_query(table_name, column, query, schema):
 
     # Build the query string
     if schema[column] == "json":
-        query_str = f"SELECT DISTINCT JSON_EXTRACT({column}, '$[*]') FROM {table_name}"
+        query_str = f"""
+        SELECT DISTINCT value
+        FROM (
+            SELECT json_each.value
+            FROM {table_name}, json_each({table_name}.{column})
+        ) subquery
+        """
     else:
         query_str = f"SELECT DISTINCT {column} FROM {table_name}"
+
     if where_conditions:
         query_str += f" WHERE {' AND '.join(where_conditions)}"
 
@@ -259,18 +266,20 @@ def distinct_count_query(table_name, column, query, schema, min_count=0, top_n=N
     where_conditions, params = parse_query(query, schema)
 
     if schema[column] == "json":
-        query_str = f"SELECT JSON_EXTRACT({column}, '$[*]') AS extracted_column, COUNT(*) AS count FROM {table_name}"
+        query_str = f"""
+        SELECT value, COUNT(*) AS count
+        FROM (
+            SELECT json_each.value
+            FROM {table_name}, json_each({table_name}.{column})
+        ) subquery
+        """
     else:
         query_str = f"SELECT {column}, COUNT(*) AS count FROM {table_name}"
 
     if where_conditions:
         query_str += f" WHERE {' AND '.join(where_conditions)}"
 
-    if schema[column] == "json":
-        query_str += " GROUP BY extracted_column"
-    else:
-        query_str += f" GROUP BY {column}"
-
+    query_str += " GROUP BY value"
     query_str += f" HAVING COUNT(*) >= {min_count}"
 
     if top_n is not None:
