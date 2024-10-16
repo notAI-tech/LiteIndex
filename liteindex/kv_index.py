@@ -96,6 +96,11 @@ class KVIndex:
                         "UPDATE kv_index SET updated_at = ? WHERE key_hash = ? RETURNING num_value, string_value, pickled_value",
                         (self.__current_time(), key),
                     ).fetchone()
+                elif self.eviction.policy == EvictionCfg.EvictFIFO:
+                    row = conn.execute(
+                        "UPDATE kv_index SET updated_at = ? WHERE key_hash = ? RETURNING num_value, string_value, pickled_value",
+                        (self.__current_time(), key),
+                    ).fetchone()
 
         if row is None:
             raise KeyError
@@ -128,6 +133,11 @@ class KVIndex:
                         f"UPDATE kv_index SET updated_at = ? WHERE key_hash IN ({', '.join(['?'] * len(keys))}) RETURNING key_hash, num_value, string_value, pickled_value",
                         (self.__current_time(), *keys),
                     ).fetchall()
+                elif self.eviction.policy == EvictionCfg.EvictFIFO:
+                    rows = conn.execute(
+                        f"UPDATE kv_index SET updated_at = ? WHERE key_hash IN ({', '.join(['?'] * len(keys))}) RETURNING key_hash, num_value, string_value, pickled_value",
+                        (self.__current_time(), *keys),
+                    ).fetchall()
 
         if rows is None:
             raise KeyError
@@ -145,7 +155,13 @@ class KVIndex:
                 "Cannot iterate over items in reverse when preserve_order is False"
             )
 
-        sql = f"SELECT key_hash, pickled_key, num_value, string_value, pickled_value FROM kv_index {'ORDER BY updated_at' if self.preserve_order else ''} {'DESC' if reverse else ''}"
+        sql = f"SELECT key_hash, pickled_key, num_value, string_value, pickled_value FROM kv_index"
+        if self.preserve_order:
+            sql += f" ORDER BY updated_at {'DESC' if reverse else 'ASC'}, rowid {'DESC' if reverse else 'ASC'}"
+        elif reverse:
+            raise Exception(
+                "Cannot iterate over items in reverse when preserve_order is False"
+            )
 
         for row in self.__connection.execute(sql):
             if row is None:
@@ -162,7 +178,13 @@ class KVIndex:
                 "Cannot iterate over items in reverse when preserve_order is False"
             )
 
-        sql = f"SELECT key_hash, pickled_key FROM kv_index {'ORDER BY updated_at' if self.preserve_order else ''} {'DESC' if reverse else ''}"
+        sql = f"SELECT key_hash, pickled_key FROM kv_index"
+        if self.preserve_order:
+            sql += f" ORDER BY updated_at {'DESC' if reverse else 'ASC'}, rowid {'DESC' if reverse else 'ASC'}"
+        elif reverse:
+            raise Exception(
+                "Cannot iterate over items in reverse when preserve_order is False"
+            )
 
         for row in self.__connection.execute(sql):
             if row is None:
@@ -176,7 +198,13 @@ class KVIndex:
                 "Cannot iterate over items in reverse when preserve_order is False"
             )
 
-        sql = f"SELECT num_value, string_value, pickled_value FROM kv_index {'ORDER BY updated_at' if self.preserve_order else ''} {'DESC' if reverse else ''}"
+        sql = f"SELECT num_value, string_value, pickled_value FROM kv_index"
+        if self.preserve_order:
+            sql += f" ORDER BY updated_at {'DESC' if reverse else 'ASC'}, rowid {'DESC' if reverse else 'ASC'}"
+        elif reverse:
+            raise Exception(
+                "Cannot iterate over items in reverse when preserve_order is False"
+            )
 
         for row in self.__connection.execute(sql):
             if row is None:
@@ -232,7 +260,7 @@ class KVIndex:
             # assume delete from returning query is suported and write a single query that returns the value, size_in_bytes and deletes the row
             if self.eviction.max_size_in_mb:
                 row = conn.execute(
-                    f"DELETE FROM kv_index WHERE key_hash = ? RETURNING pickled_value, size_in_bytes",
+                    f"DELETE FROM kv_index WHERE key_hash = ? RETURNING num_value, string_value, pickled_value, size_in_bytes",
                     (self.__encode_and_hash(key)[0]),
                 ).fetchone()
 
@@ -242,28 +270,28 @@ class KVIndex:
                 conn.execute(
                     "UPDATE kv_index_num_metadata SET num = num - ? WHERE key = ?",
                     (
-                        row[1] / (1024 * 1024),
+                        row[3] / (1024 * 1024),
                         "current_size_in_mb",
                     ),
                 )
 
-                return self.__decode_value(row[0])
+                return self.__decode_value(row[0:3])
             else:
                 row = conn.execute(
-                    f"DELETE FROM kv_index WHERE key_hash = ? RETURNING pickled_value",
-                    (self.__encode_and_hash(key)[0]),
+                    f"DELETE FROM kv_index WHERE key_hash = ? RETURNING num_value, string_value, pickled_value",
+                    (self.__encode_and_hash(key)[0],),
                 ).fetchone()
 
                 if row is None:
                     raise KeyError
 
-                return self.__decode_value(row[0])
+                return self.__decode_value(row[0:3])
 
     def popitems(self, n=1, reverse=True):
         with self.__connection as conn:
             if self.eviction.max_size_in_mb:
                 rows = conn.execute(
-                    f"DELETE FROM kv_index WHERE ROWID IN (SELECT ROWID FROM kv_index ORDER BY updated_at {'DESC' if reverse else ''} LIMIT {n}) RETURNING pickled_key, pickled_value, size_in_bytes",
+                    f"DELETE FROM kv_index WHERE ROWID IN (SELECT ROWID FROM kv_index ORDER BY updated_at, rowid {'DESC' if reverse else 'ASC'} LIMIT {n}) RETURNING pickled_key, key_hash, num_value, string_value, pickled_value, size_in_bytes",
                 ).fetchall()
 
                 if rows is None:
@@ -272,25 +300,25 @@ class KVIndex:
                 conn.execute(
                     "UPDATE kv_index_num_metadata SET num = num - ? WHERE key = ?",
                     (
-                        sum([row[2] for row in rows]) / (1024 * 1024),
+                        sum([row[3] for row in rows]) / (1024 * 1024),
                         "current_size_in_mb",
                     ),
                 )
 
                 return [
-                    (self.__decode_key(row[0], None), self.__decode_value(row[1]))
+                    (self.__decode_key(row[0], row[1]), self.__decode_value(row[2:5]))
                     for row in rows
                 ]
             else:
                 rows = conn.execute(
-                    f"DELETE FROM kv_index WHERE ROWID IN (SELECT ROWID FROM kv_index ORDER BY updated_at {'DESC' if reverse else ''} LIMIT {n}) RETURNING pickled_key, pickled_value",
+                    f"DELETE FROM kv_index WHERE ROWID IN (SELECT ROWID FROM kv_index ORDER BY updated_at, rowid {'DESC' if reverse else 'ASC'} LIMIT {n}) RETURNING pickled_key, key_hash, num_value, string_value, pickled_value",
                 ).fetchall()
 
                 if rows is None:
                     raise KeyError
 
                 return [
-                    (self.__decode_key(row[0], None), self.__decode_value(row[1]))
+                    (self.__decode_key(row[0], row[1]), self.__decode_value(row[2:5]))
                     for row in rows
                 ]
 
@@ -596,7 +624,7 @@ class KVIndex:
             conn.execute("VACUUM")
 
     def popitem(self, reverse=True):
-        self.popitems(n=1, reverse=reverse)[0]
+        return self.popitems(n=1, reverse=reverse)[0]
 
     def clear(self):
         with self.__connection as conn:
