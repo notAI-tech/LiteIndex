@@ -470,6 +470,9 @@ class KVIndex:
                     key_hashes,
                 ).fetchone()[0]
 
+                if total_old_size is None:
+                    total_old_size = 0
+
                 conn.execute(
                     "UPDATE kv_index_num_metadata SET num = num + ? WHERE key = ?",
                     (
@@ -554,7 +557,8 @@ class KVIndex:
         if self.eviction.max_size_in_mb:
             s = time.time()
             current_size_in_mb = conn.execute(
-                "SELECT num FROM kv_index_num_metadata WHERE key = current_size_in_mb"
+                "SELECT num FROM kv_index_num_metadata WHERE key = ?",
+                ("current_size_in_mb",),
             ).fetchone()[0]
 
             if current_size_in_mb >= self.eviction.max_size_in_mb:
@@ -570,6 +574,8 @@ class KVIndex:
 
         if number_of_rows_to_evict == 0:
             return
+        
+        print('----', number_of_rows_to_evict, self.eviction.policy, self.eviction.max_size_in_mb, self.eviction.max_number_of_items)
 
         if not self.eviction.max_size_in_mb:
             if self.eviction.policy == EvictionCfg.EvictLRU:
@@ -629,10 +635,7 @@ class KVIndex:
     def clear(self):
         with self.__connection as conn:
             conn.execute("DELETE FROM kv_index")
-            conn.execute(
-                "UPDATE kv_index_num_metadata SET num = 0 WHERE key = ?",
-                ("current_size_in_mb",),
-            )
+            conn.execute("UPDATE kv_index_num_metadata SET num = 0 WHERE key = ?", ("current_size_in_mb",))
 
     def create_trigger(
         self,
