@@ -22,23 +22,12 @@ try:
 except:
     zstandard = None
 
-faiss = None
-np = None
+try:
+    import vectorlite_py
 
-
-def _import_faiss():
-    global faiss
-    global np
-
-    try:
-        import faiss
-    except:
-        faiss = None
-
-    try:
-        import numpy as np
-    except:
-        np = None
+    vectorlite_path = os.environ.get("VECTORLITE_PATH", vectorlite_py.vectorlite_path())
+except:
+    vectorlite_path = None
 
 
 from .query_parser import (
@@ -125,9 +114,6 @@ class DefinedIndex:
         self.__meta_table_name = f"__{self.name}_meta"
         self.__column_names = ["id", "updated_at"]
 
-        self.__vector_search_indexes = {}
-        self.__vector_indexes_last_updated_at = {}
-
         self.__local_storage = threading.local()
 
         if not self.db_path == ":memory:":
@@ -149,121 +135,6 @@ class DefinedIndex:
         self.__meta_schema = self.schema.copy()
         self.__meta_schema["updated_at"] = "number"
         self.__meta_schema["integer_id"] = "number"
-
-    def __update_vector_search_index(self, for_key, dim=None):
-        if faiss is None:
-            _import_faiss()
-
-        if for_key not in self.__vector_indexes_last_updated_at:
-            try:
-                self.__vector_search_indexes[for_key] = faiss.IndexIDMap(
-                    faiss.IndexFlatIP(dim)
-                )
-            except ImportError:
-                raise ValueError(
-                    "`pip install faiss-cpu` or `pip install liteindex[all]`"
-                )
-
-            self.__vector_indexes_last_updated_at[for_key] = 0
-
-        newest_updated_at_time = self.__connection.execute(
-            f'''SELECT MAX(updated_at) FROM "{self.name}"'''
-        ).fetchone()[0]
-
-        if newest_updated_at_time is None:
-            return
-
-        if self.__vector_indexes_last_updated_at[for_key] >= newest_updated_at_time:
-            return
-
-        embeddings_batch = []
-        integer_id_batch = []
-
-        for __row in self.__connection.execute(
-            f"""SELECT integer_id, "{for_key}" FROM "{self.name}" WHERE updated_at > {self.__vector_indexes_last_updated_at[for_key]} AND updated_at <= {newest_updated_at_time} AND "{for_key}" IS NOT NULL"""
-        ):
-            embeddings_batch.append(__row[1])
-            integer_id_batch.append(__row[0])
-
-            if len(integer_id_batch) >= 10000:
-                integer_id_batch = np.array(integer_id_batch, dtype=np.int64)
-                self.__vector_search_indexes[for_key].remove_ids(integer_id_batch)
-
-                self.__vector_search_indexes[for_key].add_with_ids(
-                    np.frombuffer(b"".join(embeddings_batch), dtype=np.float32).reshape(
-                        len(integer_id_batch), dim
-                    ),
-                    integer_id_batch,
-                )
-                embeddings_batch = []
-                integer_id_batch = []
-
-        if len(integer_id_batch) > 0:
-            integer_id_batch = np.array(integer_id_batch, dtype=np.int64)
-            self.__vector_search_indexes[for_key].remove_ids(integer_id_batch)
-
-            self.__vector_search_indexes[for_key].add_with_ids(
-                np.frombuffer(b"".join(embeddings_batch), dtype=np.float32).reshape(
-                    len(integer_id_batch), dim
-                ),
-                integer_id_batch,
-            )
-
-            embeddings_batch = []
-            integer_id_batch = []
-
-        self.__vector_indexes_last_updated_at[for_key] = newest_updated_at_time
-
-    def __get_scores_and_integer_ids_table_name(
-        self,
-        sort_by_embedding,
-        key_name,
-        sort_by_embedding_min_similarity,
-        n_results_to_search=None,
-    ):
-        sort_by_embedding = np.array(sort_by_embedding, dtype=np.float32).reshape(1, -1)
-
-        for try_n in range(1, 11):
-            n_vecs_to_search = (
-                max((self.__vector_search_indexes[key_name].ntotal * try_n) // 10, 1)
-                if n_results_to_search is None
-                else min(
-                    n_results_to_search, self.__vector_search_indexes[key_name].ntotal
-                )
-            )
-
-            scores, integer_ids = self.__vector_search_indexes[key_name].search(
-                sort_by_embedding,
-                n_vecs_to_search,
-            )
-
-            if (
-                (scores[0][-1] < sort_by_embedding_min_similarity)
-                or (n_vecs_to_search >= self.__vector_search_indexes[key_name].ntotal)
-                or (n_results_to_search is not None)
-            ):
-                break
-
-        integer_ids = integer_ids[0]
-        scores = scores[0]
-
-        scores = scores[scores >= sort_by_embedding_min_similarity].tolist()
-        integer_ids = integer_ids[: len(scores)].tolist()
-
-        with self.__connection as conn:
-            _temp_name = f"temp_embeds_{uuid.uuid4().hex}"
-
-            conn.execute(
-                f"""CREATE TEMP TABLE {_temp_name} (_integer_id INTEGER PRIMARY KEY, score NUMBER)"""
-            )
-            _temp_name = f"temp.{_temp_name}"
-
-            conn.executemany(
-                f"""INSERT INTO {_temp_name} (_integer_id, score) VALUES (?, ?)""",
-                zip(integer_ids, scores),
-            )
-
-            return _temp_name
 
     def __del__(self):
         if self.__connection:
@@ -287,6 +158,11 @@ class DefinedIndex:
             )
 
             self.__local_storage.db_conn.execute(f"PRAGMA BUSY_TIMEOUT=60000")
+
+            if vectorlite_path is not None:
+                self.__local_storage.db_conn.enable_load_extension(True)
+                self.__local_storage.db_conn.load_extension(vectorlite_path)
+                self.__local_storage.db_conn.enable_load_extension(False)
 
         return self.__local_storage.db_conn
 
@@ -528,7 +404,7 @@ class DefinedIndex:
         return_metadata=False,
         metadata_key_name="__meta",
         sort_by_embedding=None,
-        sort_by_embedding_min_similarity=0,
+        sort_by_embedding_metric="cosine",
         meta_query={},
     ):
         if page_no is not None:
@@ -539,30 +415,6 @@ class DefinedIndex:
 
         elif self.schema[sort_by] in {"blob", "other"}:
             sort_by = f"__size_{sort_by}"
-
-        sorting_by_vector = False
-
-        if self.schema.get(sort_by) == "normalized_embedding":
-            if sort_by_embedding is None:
-                raise ValueError("sort_by_embedding must be provided")
-
-            self.__update_vector_search_index(sort_by, len(sort_by_embedding))
-
-            sorting_by_vector = True
-
-            n_results_to_search = None
-
-            if n is not None and not query:
-                n_results_to_search = n + (offset or 0)
-
-            integer_ids_to_scores_table_name = (
-                self.__get_scores_and_integer_ids_table_name(
-                    sort_by_embedding,
-                    sort_by,
-                    sort_by_embedding_min_similarity,
-                    n_results_to_search,
-                )
-            )
 
         if select_keys is None:
             select_keys = self.schema
@@ -583,16 +435,9 @@ class DefinedIndex:
             reversed_sort=reversed_sort,
             n=n,
             offset=offset,
-            select_columns=(
-                ("integer_id", "id", "updated_at")
-                + (() if sort_by_embedding is None else ("score",))
-                + select_keys
-            )
-            if not update
-            else ["id"],
-            for_sorting_integer_ids_to_scores_table_name=integer_ids_to_scores_table_name
-            if sorting_by_vector
-            else None,
+            select_columns=select_keys if not update else ["id"],
+            sort_by_embedding=sort_by_embedding,
+            sort_by_embedding_metric=sort_by_embedding_metric,
         )
 
         _results = None
@@ -614,15 +459,10 @@ class DefinedIndex:
         else:
             _results = self.__connection.execute(sql_query, sql_params).fetchall()
 
-        if sorting_by_vector:
-            self.__connection.execute(
-                f'''DROP TABLE IF EXISTS "{integer_ids_to_scores_table_name}"'''
-            )
-
         results = {}
 
         for result in _results:
-            if sorting_by_vector:
+            if sort_by_embedding is not None:
                 integer_id, _id, updated_at, score = result[:4]
             else:
                 integer_id, _id, updated_at = result[:3]
@@ -632,7 +472,8 @@ class DefinedIndex:
                 {
                     h: val
                     for h, val in zip(
-                        select_keys, result[3:] if not sorting_by_vector else result[4:]
+                        select_keys,
+                        result[3:] if sort_by_embedding is None else result[4:],
                     )
                 },
                 self.__decompressor,
@@ -644,8 +485,8 @@ class DefinedIndex:
                     "updated_at": updated_at,
                 }
 
-                if sorting_by_vector:
-                    results[_id][metadata_key_name]["sort_score"] = score
+                if sort_by_embedding is not None:
+                    results[_id][metadata_key_name]["embedding_distance"] = score
 
         return results
 

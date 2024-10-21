@@ -25,7 +25,7 @@ REQUIRED = []
 
 # What packages are optional?
 EXTRAS = {
-    "all": ["zstandard", "faiss-cpu", "numpy"],
+    "all": ["zstandard", "vectorlite-py", "numpy"],
 }
 
 # The rest you shouldn't have to touch too much :)

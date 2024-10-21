@@ -198,26 +198,44 @@ def search_query(
     n=None,
     offset=None,
     select_columns=None,
-    for_sorting_integer_ids_to_scores_table_name=None,
+    sort_by_embedding=None,
+    sort_by_embedding_metric="cosine",
 ):
     where_conditions, params = parse_query(query, schema)
 
+    # Add distance calculation if sort_by_embedding is provided
+    if sort_by_embedding is not None:
+        distance_func = (
+            f"""vector_distance(?, "{sort_by}", '{sort_by_embedding_metric}')"""
+        )
+        select_columns = (
+            "integer_id",
+            "id",
+            "updated_at",
+            (f"{distance_func} AS __distance",),
+        ) + select_columns
+
+        params.insert(0, sort_by_embedding.tobytes())
+    else:
+        select_columns = ("integer_id", "id", "updated_at") + select_columns
+
     selected_columns = (
-        ", ".join([f'"{_}"' for _ in select_columns]) if select_columns else "*"
+        ", ".join([f'"{_}"' if isinstance(_, str) else _[0] for _ in select_columns])
+        if select_columns
+        else "*"
     )
 
     query_str = f"SELECT {selected_columns} FROM {table_name}"
 
-    if for_sorting_integer_ids_to_scores_table_name:
-        query_str += f" INNER JOIN {for_sorting_integer_ids_to_scores_table_name} ON {table_name}.integer_id = {for_sorting_integer_ids_to_scores_table_name}._integer_id"
-
     if where_conditions:
         query_str += f" WHERE {' AND '.join(where_conditions)}"
-    if sort_by:
-        if for_sorting_integer_ids_to_scores_table_name:
-            query_str += f" ORDER BY {for_sorting_integer_ids_to_scores_table_name}.score {'DESC' if reversed_sort else 'ASC'}"
 
-        elif isinstance(sort_by, list):
+    # Handle sorting
+    if sort_by_embedding is not None:
+        query_str += f""" ORDER BY vector_distance(?, "{sort_by}", '{sort_by_embedding_metric}') {'ASC' if reversed_sort else 'DESC'}"""
+        params.append(sort_by_embedding.tobytes())
+    elif sort_by:
+        if isinstance(sort_by, list):
             query_str += " ORDER BY "
             sort_list = []
             for sort_item in sort_by:
