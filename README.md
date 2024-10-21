@@ -1,5 +1,5 @@
 # LiteIndex
-Embedded, thread and process safe, disk backed, easy to use, query-able, fast Index implementations
+Embedded, thread and process safe, disk backed, easy to use, query-able, fast Index (Cache) implementations
 
 ```python
 pip install --upgrade liteindex
