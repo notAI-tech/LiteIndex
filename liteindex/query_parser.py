@@ -232,8 +232,7 @@ def search_query(
 
     # Handle sorting
     if sort_by_embedding is not None:
-        query_str += f""" ORDER BY vector_distance(?, "{sort_by}", '{sort_by_embedding_metric}') {'ASC' if reversed_sort else 'DESC'}"""
-        params.append(sort_by_embedding.tobytes())
+        query_str += f""" ORDER BY __distance {'ASC' if reversed_sort else 'DESC'}"""
     elif sort_by:
         if isinstance(sort_by, list):
             query_str += " ORDER BY "
