@@ -11,7 +11,7 @@ pip install --upgrade liteindex[all]
 - `number`, `boolean`, `datetime`, `string`, `compressed_string`, `blob`, `json`, `normalized_embedding`, and `other` types are supported and `can be queried upon`
 - can store any python objects with varying levels of query-ability
 - `Query language is subset of mongodb's`. All queries are documented
-- seamless, very fast nearest neighbor search with filtering. a practical wrapper of faiss + sqlite. Approximate nearest neighbor search is not supported. Intended for few million vector search
+- seamless, very fast nearest neighbor search with filtering. can order by, filter by as usual with embeddings
 - works across threads, processes seamlessly
 - handy features like search and update in single query, batch operation support for update, search, del, pop etc ..
 - in-place math operations support wherever applicable i.e: += etc can be done in single query optimally
