@@ -2,7 +2,7 @@
 Embedded, thread and process safe, disk backed, easy to use, query-able, fast Index (Cache) implementations
 
 ```python
-pip install --upgrade liteindex
+pip install --upgrade liteindex[all]
 ```
 
 ### DefinedIndex
