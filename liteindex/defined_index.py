@@ -684,42 +684,87 @@ class DefinedIndex:
         for_key,
         function_to_trigger,
         before_delete=False,
+        after_delete=False,
         after_set=False,
         before_set=False,
         for_keys=None,
     ):
-        if after_set:
-            operation = "INSERT"
-            timing = "AFTER"
-        elif before_set:
-            operation = "INSERT"
-            timing = "BEFORE"
-        elif before_delete:
-            operation = "DELETE"
-            timing = "BEFORE"
+        """
+        Creates a trigger in the database that executes a Python function when specified events occur.
+        
+        Args:
+            trigger_name (str): Name of the trigger
+            for_key (str): The column to monitor for changes
+            function_to_trigger (callable): Python function to execute when trigger fires
+            before_delete (bool): Execute trigger before DELETE operations
+            after_delete (bool): Execute trigger after DELETE operations
+            after_set (bool): Execute trigger after UPDATE/INSERT operations
+            before_set (bool): Execute trigger before UPDATE/INSERT operations
+            for_keys (list): List of specific keys to monitor (optional)
+        """
+        if trigger_name.startswith("__"):
+            raise ValueError("Trigger name cannot start with '__'")
+
+        if sum([before_delete, after_delete, after_set, before_set]) != 1:
+            raise ValueError("Exactly one trigger type must be specified")
+
+        trigger_key = f"trigger_func_{trigger_name}"
+        
+        # Register the Python function as a SQLite function
+        def wrapped_trigger_func(*args):
+            function_to_trigger(*args)
+            return 1
+
+        self.__connection.create_function(trigger_key, 1, wrapped_trigger_func)
+        
+        # Determine trigger timing and event
+        when = "BEFORE" if before_delete or before_set else "AFTER"
+        if before_delete or after_delete:
+            events = ["DELETE"]
         else:
-            raise ValueError("before_delete or after_set must be True")
+            events = ["INSERT", "UPDATE"]
+        
+        # Create triggers for each event
+        with self.__connection:
+            for event in events:
+                value_ref = "NEW" if event in ("INSERT", "UPDATE") else "OLD"
+                
+                trigger_sql = f"""
+                CREATE TRIGGER IF NOT EXISTS "{trigger_name}_{event.lower()}"
+                {when} {event} ON "{self.name}"
+                BEGIN
+                    SELECT {trigger_key}({value_ref}.id);
+                END;
+                """
+                self.__connection.execute(trigger_sql)
 
-        if for_keys is None:
-            for_keys = [for_key]
+    def drop_trigger(self, trigger_name):
+        """
+        Removes a trigger from the database.
+        
+        Args:
+            trigger_name (str): Name of the trigger to remove
+        """
+        with self.__connection:
+            # Drop both INSERT and UPDATE triggers if they exist
+            self.__connection.execute(f"""DROP TRIGGER IF EXISTS "{trigger_name}_insert";""")
+            self.__connection.execute(f"""DROP TRIGGER IF EXISTS "{trigger_name}_update";""")
+            self.__connection.execute(f"""DROP TRIGGER IF EXISTS "{trigger_name}_delete";""")
 
-        for_keys = [self.__co]
-
-        function_name = f"{trigger_name}_function"
-
-        with self.__connection as conn:
-            conn.create_function(function_name, 1, function_to_trigger)
-
-            trigger_sql = f"""
-            CREATE TRIGGER IF NOT EXISTS {trigger_name}
-            {timing} {operation} ON {self.name}
-
-            WHEN NEW.
-
-            BEGIN
-                {function_name}(NEW.{for_key});
-            END;
-            """
+    def list_triggers(self):
+        """
+        Returns a list of all triggers defined for this index.
+        
+        Returns:
+            list: List of trigger names
+        """
+        return [
+            row[0]
+            for row in self.__connection.execute(
+                f"""SELECT name FROM sqlite_master 
+                WHERE type='trigger' AND tbl_name='{self.name}'"""
+            ).fetchall()
+        ]
 
     def vaccum(self):
         self.__connection.execute("VACUUM")
