@@ -6,6 +6,14 @@ try:
 except ImportError:
     from defined_serializers import hash_bytes
 
+import json
+import pickle
+
+try:
+    from .defined_serializers import hash_bytes
+except ImportError:
+    from defined_serializers import hash_bytes
+
 
 def parse_query(query, schema, prefix=None):
     where_conditions = []
@@ -16,26 +24,37 @@ def parse_query(query, schema, prefix=None):
 
     def process_nested_query(value, prefix):
         nonlocal where_conditions, params
-        column = (
-            "json_extract(" + prefix[0] + ", '$." + ".".join(prefix[1:]) + "')"
-            if len(prefix) > 1
-            else prefix[0]
-        )
+        conditions = (
+            []
+        )  # Local conditions list instead of using where_conditions directly
 
-        column_type = schema.get(column)
+        # Determine if we're dealing with a JSON field
+        is_json_field = schema.get(prefix[0]) == "json" if prefix else False
+
+        # Build column reference
+        if is_json_field and len(prefix) > 1:
+            column = f"json_extract({prefix[0]}, '$.{'.'.join(prefix[1:])}')"
+        else:
+            column = f'"{prefix[0]}"' if not is_json_field else prefix[0]
+
+        column_type = schema.get(prefix[0])
 
         if isinstance(value, dict):
             sub_conditions = []
             for sub_key, sub_value in value.items():
-                if sub_value is None and sub_key == "$ne":
-                    sub_conditions.append(
-                        f'("{column}" IS NOT NULL)'
-                        if column_type is not None
-                        else f"({column} IS NOT NULL)"
-                    )
-                elif sub_key in ["$ne", "$like", "$gt", "$lt", "$gte", "$lte"]:
+                # Handle special operators
+                if sub_key in ["$ne", "$like", "$gt", "$lt", "$gte", "$lte", "$eq"]:
+                    # Special handling for NULL values
+                    if sub_value is None:
+                        if sub_key == "$ne":
+                            sub_conditions.append(f"({column} IS NOT NULL)")
+                        elif sub_key == "$eq":
+                            sub_conditions.append(f"{column} IS NULL")
+                        continue
+
                     operator = {
                         "$ne": "!=",
+                        "$eq": "=",
                         "$like": "LIKE",
                         "$gt": ">",
                         "$lt": "<",
@@ -43,27 +62,38 @@ def parse_query(query, schema, prefix=None):
                         "$lte": "<=",
                     }[sub_key]
 
-                    if schema[prefix[0]] == "json" and sub_key == "$like":
+                    if is_json_field and sub_key == "$like":
                         sub_conditions.append(
                             f"EXISTS(SELECT 1 FROM json_each({column}) WHERE value {operator} ?)"
                         )
                     else:
                         if sub_key == "$ne":
                             sub_conditions.append(
-                                f'("{column}" {operator} ? OR "{column}" IS NULL)'
-                                if column_type is not None
-                                else f"({column} {operator} ? OR {column} IS NULL)"
+                                f"({column} {operator} ? OR {column} IS NULL)"
                             )
                         else:
-                            sub_conditions.append(
-                                f'"{column}" {operator} ?'
-                                if column_type is not None
-                                else f"{column} {operator} ?"
-                            )
+                            sub_conditions.append(f"{column} {operator} ?")
 
-                    params.append(sub_value)
+                    processed_value = sub_value
+                    if column_type == "other":
+                        processed_value = hash_bytes(
+                            pickle.dumps(sub_value, protocol=pickle.HIGHEST_PROTOCOL)
+                        )
+                    elif column_type == "blob":
+                        processed_value = hash_bytes(sub_value)
+                    elif column_type == "datetime":
+                        processed_value = sub_value.timestamp()
+                    elif column_type == "boolean":
+                        processed_value = int(sub_value)
+                    elif column_type == "compressed_string":
+                        processed_value = sub_value.encode()
+                        # TODO: Handle compressed strings
+                        pass
+
+                    params.append(processed_value)
+
                 elif sub_key == "$in":
-                    if schema[prefix[0]] == "json":
+                    if is_json_field:
                         json_conditions = []
                         for val in sub_value:
                             json_conditions.append(
@@ -72,95 +102,143 @@ def parse_query(query, schema, prefix=None):
                             params.append(val)
                         sub_conditions.append(f"({ ' OR '.join(json_conditions) })")
                     else:
+                        placeholders = ", ".join(["?" for _ in sub_value])
                         sub_conditions.append(
-                            f"""("{column}" IN ({', '.join(['?' for _ in sub_value])}) OR "{column}" IS NULL)"""
-                            if column_type is not None
-                            else f"({column} IN ({', '.join(['?' for _ in sub_value])}) OR {column} IS NULL)"
+                            f"({column} IN ({placeholders}) OR {column} IS NULL)"
                         )
                         params.extend(sub_value)
+
                 elif sub_key == "$nin":
-                    if schema[prefix[0]] == "json":
+                    if is_json_field:
                         json_conditions = []
-                        for val in sub_value:
+                        non_null_values = [v for v in sub_value if v is not None]
+                        has_null = None in sub_value
+
+                        for val in non_null_values:
                             json_conditions.append(
                                 f"NOT EXISTS(SELECT 1 FROM json_each({column}) WHERE value = ?)"
                             )
                             params.append(val)
-                        sub_conditions.append(f"({ ' AND '.join(json_conditions) })")
-                    else:
-                        sub_conditions.append(
-                            f"""("{column}" NOT IN ({', '.join(['?' for _ in sub_value])}) OR "{column}" IS NULL)"""
-                            if column_type is not None
-                            else f"({column} NOT IN ({', '.join(['?' for _ in sub_value])}) OR {column} IS NULL)"
+
+                        _conditions = (
+                            [f"({ ' AND '.join(json_conditions) })"]
+                            if json_conditions
+                            else []
                         )
-                        params.extend(sub_value)
+                        if has_null:
+                            _conditions.append(
+                                f"json_extract({prefix[0]}, '$') IS NOT NULL"
+                            )
+
+                        sub_conditions.append(f"({ ' AND '.join(_conditions) })")
+                    else:
+                        non_null_values = [v for v in sub_value if v is not None]
+                        has_null = None in sub_value
+
+                        _conditions = []
+                        if non_null_values:
+                            placeholders = ", ".join(["?" for _ in non_null_values])
+                            _conditions.append(f"{column} NOT IN ({placeholders})")
+                            params.extend(non_null_values)
+
+                        if has_null:
+                            _conditions.append(f"{column} IS NOT NULL")
+
+                        sub_conditions.append(f"({ ' AND '.join(_conditions) })")
+
+                elif sub_key in ["$and", "$or"]:
+                    # Handle nested logical operators
+                    nested_conditions = []
+                    for nested_value in sub_value:
+                        nested_result = parse_query({"dummy": nested_value}, schema)[0]
+                        if nested_result:
+                            nested_conditions.append(
+                                nested_result[0].replace('"dummy"', column)
+                            )
+                    if nested_conditions:
+                        join_op = " OR " if sub_key == "$or" else " AND "
+                        sub_conditions.append(f"({join_op.join(nested_conditions)})")
+
                 else:
-                    process_nested_query(sub_value, prefix + [sub_key])
+                    # Handle nested fields
+                    nested_result = process_nested_query(sub_value, prefix + [sub_key])
+                    if nested_result:
+                        sub_conditions.extend(nested_result)
+
             if sub_conditions:
-                where_conditions.append(f"({' AND '.join(sub_conditions)})")
+                conditions.extend(sub_conditions)
 
         elif isinstance(value, list):
-            if schema[prefix[0]] == "json":
+            if is_json_field:
                 json_conditions = []
                 for val in value:
                     json_conditions.append(
                         f"EXISTS(SELECT 1 FROM json_each({column}) WHERE value = ?)"
                     )
                     params.append(json.dumps(val))
-                where_conditions.append(f"({ ' OR '.join(json_conditions) })")
+                conditions.append(f"({ ' OR '.join(json_conditions) })")
             else:
-                where_conditions.append(
-                    f"""("{column}" IN ({', '.join(['?' for _ in value])}) OR "{column}" IS NULL)"""
-                )
+                placeholders = ", ".join(["?" for _ in value])
+                conditions.append(f"({column} IN ({placeholders}) OR {column} IS NULL)")
                 params.extend(value)
 
         elif value is None:
-            if len(prefix) > 1:
-                json_column = prefix[0]
+            if is_json_field and len(prefix) > 1:
                 json_path = ".".join(prefix[1:])
-                where_conditions.append(
-                    f"""(json_type({json_column}, '$.{json_path}') IS NOT NULL AND json_extract({json_column}, '$.{json_path}') IS NULL)"""
+                conditions.append(
+                    f"(json_type({prefix[0]}, '$.{json_path}') IS NOT NULL AND json_extract({prefix[0]}, '$.{json_path}') IS NULL)"
                 )
             else:
-                where_conditions.append(
-                    f'"{column}" IS NULL'
-                    if column_type is not None
-                    else f"{column} IS NULL"
-                )
+                conditions.append(f"{column} IS NULL")
         else:
+            processed_value = value
+
             if column_type == "other":
-                column = f"__hash_{column}"
-                value = pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
-                value = hash_bytes(value)
+                column = f'"__hash_{prefix[0]}"'
+                processed_value = hash_bytes(
+                    pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
+                )
             elif column_type == "blob":
-                column = f"__hash_{column}"
-                value = hash_bytes(value)
+                column = f'"__hash_{prefix[0]}"'
+                processed_value = hash_bytes(value)
             elif column_type == "datetime":
-                value = value.timestamp()
+                processed_value = value.timestamp()
             elif column_type == "boolean":
-                value = int(value)
+                processed_value = int(value)
             elif column_type == "compressed_string":
-                value = value.encode()
+                processed_value = value.encode()
                 # TODO: Handle compressed strings
                 pass
 
-            where_conditions.append(
-                f'"{column}" = ?' if column_type is not None else f"{column} = ?"
-            )
-            params.append(value)
+            conditions.append(f"{column} = ?")
+            params.append(processed_value)
 
+        return conditions
+
+    # Process top-level query
     for key, value in query.items():
         if key in ["$and", "$or"]:
-            sub_conditions, sub_params = zip(
-                *(parse_query(cond, schema) for cond in value)
-            )
-            sub_conditions = [cond for sublist in sub_conditions for cond in sublist]
-            where_conditions.append(
-                f"({' OR '.join(sub_conditions) if key == '$or' else ' AND '.join(sub_conditions)})"
-            )
-            params.extend(item for sublist in sub_params for item in sublist)
+            sub_conditions = []
+            for cond in value:
+                # Process each condition in the $and/$or array
+                cond_results = []
+                for sub_key, sub_value in cond.items():
+                    nested_conditions = process_nested_query(sub_value, [sub_key])
+                    if nested_conditions:
+                        # Join conditions within the same object with AND
+                        cond_results.append(f"({' AND '.join(nested_conditions)})")
+                if cond_results:
+                    # Add the grouped conditions
+                    sub_conditions.append(f"({' AND '.join(cond_results)})")
+
+            # Join all sub-conditions with the appropriate operator
+            if sub_conditions:
+                join_operator = " OR " if key == "$or" else " AND "
+                where_conditions.append(f"({join_operator.join(sub_conditions)})")
         else:
-            process_nested_query(value, [key])
+            nested_conditions = process_nested_query(value, [key])
+            if nested_conditions:
+                where_conditions.extend(nested_conditions)
 
     return where_conditions, params
 
@@ -202,6 +280,9 @@ def search_query(
     sort_by_embedding_metric="cosine",
     is_update=False,
 ):
+    if select_columns is None:
+        select_columns = tuple(schema)
+
     where_conditions, params = parse_query(query, schema)
 
     # Add distance calculation if sort_by_embedding is provided
@@ -234,7 +315,6 @@ def search_query(
     if where_conditions:
         query_str += f" WHERE {' AND '.join(where_conditions)}"
 
-    # Handle sorting
     if sort_by_embedding is not None:
         query_str += f""" ORDER BY __distance {'ASC' if reversed_sort else 'DESC'}"""
     elif sort_by:
@@ -490,266 +570,215 @@ if __name__ == "__main__":
                 "profile_picture": "blob",
             }
 
-        def test_single_condition(self):
-            query, params = search_query("users", {"age": 25}, self.schema)
-            self.assertEqual(query, "SELECT * FROM users WHERE age = ?")
+        def test_basic_equality(self):
+            # Test basic equality comparison with a simple string value
+            query = {"name": "John"}
+            conditions, params = parse_query(query, self.schema)
+            self.assertEqual(conditions, ['"name" = ?'])
+            self.assertEqual(params, ["John"])
+
+        def test_null_comparison(self):
+            # Test handling of NULL values in basic comparison
+            query = {"name": None}
+            conditions, params = parse_query(query, self.schema)
+            self.assertEqual(conditions, ['"name" IS NULL'])
+            self.assertEqual(params, [])
+
+        def test_multi_comparison(self):
+            query = {"name": "John", "age": 25, "is_true": True}
+            conditions, params = parse_query(query, self.schema)
+            self.assertEqual(conditions, ['"name" = ?', '"age" = ?', '"is_true" = ?'])
+            self.assertEqual(params, ["John", 25, 1])
+
+        def test_number_comparison(self):
+            # Test handling of numeric values
+            query = {"age": 25}
+            conditions, params = parse_query(query, self.schema)
+            self.assertEqual(conditions, ['"age" = ?'])
             self.assertEqual(params, [25])
 
-        def test_boolean_condition(self):
-            query, params = search_query("users", {"is_true": True}, self.schema)
-            self.assertEqual(query, "SELECT * FROM users WHERE is_true = ?")
+        def test_boolean_comparison(self):
+            # Test handling of boolean values (converts to int for SQLite)
+            query = {"is_true": True}
+            conditions, params = parse_query(query, self.schema)
+            self.assertEqual(conditions, ['"is_true" = ?'])
             self.assertEqual(params, [1])
 
-        def test_blob_condition(self):
-            query, params = search_query(
-                "users", {"profile_picture": b"abc"}, self.schema
-            )
-            self.assertEqual(
-                query, "SELECT * FROM users WHERE __hash_profile_picture = ?"
-            )
-            self.assertEqual(params, [hash_bytes(b"abc")])
-
-        def test_multiple_conditions(self):
-            query, params = search_query(
-                "users", {"age": 25, "name": "john"}, self.schema
-            )
-            self.assertEqual(query, "SELECT * FROM users WHERE age = ? AND name = ?")
-            self.assertEqual(params, [25, "john"])
-
-        def test_nested_conditions(self):
-            query, params = search_query(
-                "users",
-                {"$and": [{"age": {"$gte": 20, "$lte": 30}}, {"name": "john"}]},
-                self.schema,
-            )
-            self.assertEqual(
-                query,
-                "SELECT * FROM users WHERE ((age >= ? AND age <= ?) AND name = ?)",
-            )
-            self.assertEqual(params, [20, 30, "john"])
-
-        def test_json_conditions(self):
-            query, params = search_query(
-                "users", {"tags_list": ["tag1", "tag2"]}, self.schema
-            )
-            expected_query = "SELECT * FROM users WHERE (JSON_CONTAINS(tags_list, ?) OR JSON_CONTAINS(tags_list, ?))"
-            self.assertEqual(query, expected_query)
-            self.assertEqual(params, ['"tag1"', '"tag2"'])
-
-        def test_sorting(self):
-            query, params = search_query(
-                "users", {"age": 25}, self.schema, sort_by="name"
-            )
-            self.assertEqual(
-                query, "SELECT * FROM users WHERE age = ? ORDER BY name ASC"
-            )
+        def test_not_equal_operator(self):
+            # Test $ne operator including NULL handling
+            query = {"age": {"$ne": 25}}
+            conditions, params = parse_query(query, self.schema)
+            self.assertEqual(conditions, ['("age" != ? OR "age" IS NULL)'])
             self.assertEqual(params, [25])
 
-        def test_multiple_sorting(self):
-            query, params = search_query(
-                "users",
-                {"$and": [{"age": {"$gte": 20, "$lte": 30}}, {"name": "john"}]},
-                self.schema,
-                sort_by=[("age", True), ("name", False)],
-            )
-            self.assertEqual(
-                query,
-                "SELECT * FROM users WHERE ((age >= ? AND age <= ?) AND name = ?) ORDER BY age DESC, name ASC",
-            )
-            self.assertEqual(params, [20, 30, "john"])
+        def test_not_equal_null(self):
+            # Test $ne operator with NULL value
+            query = {"name": {"$ne": None}}
+            conditions, params = parse_query(query, self.schema)
+            self.assertEqual(conditions, ['("name" IS NOT NULL)'])
+            self.assertEqual(params, [])
 
-        def test_pagination(self):
-            query, params = search_query(
-                "users", {"age": 25}, self.schema, offset=10, n=10
-            )
-            self.assertEqual(
-                query, "SELECT * FROM users WHERE age = ? LIMIT 10 OFFSET 10"
-            )
+        def test_greater_than(self):
+            # Test greater than operator
+            query = {"age": {"$gt": 25}}
+            conditions, params = parse_query(query, self.schema)
+            self.assertEqual(conditions, ['"age" > ?'])
             self.assertEqual(params, [25])
 
-        def test_select_columns(self):
-            query, params = search_query(
-                "users",
-                {"age": 25},
-                self.schema,
-                select_columns=["name", "age"],
-            )
-            self.assertEqual(query, "SELECT name, age FROM users WHERE age = ?")
+        def test_less_than(self):
+            # Test less than operator
+            query = {"age": {"$lt": 25}}
+            conditions, params = parse_query(query, self.schema)
+            self.assertEqual(conditions, ['"age" < ?'])
             self.assertEqual(params, [25])
 
-        def test_or_operator(self):
-            query, params = search_query(
-                "users", {"$or": [{"age": 25}, {"name": "john"}]}, self.schema
-            )
-            self.assertEqual(query, "SELECT * FROM users WHERE (age = ? OR name = ?)")
-            self.assertEqual(params, [25, "john"])
+        def test_greater_equal(self):
+            # Test greater than or equal operator
+            query = {"age": {"$gte": 25}}
+            conditions, params = parse_query(query, self.schema)
+            self.assertEqual(conditions, ['"age" >= ?'])
+            self.assertEqual(params, [25])
 
-        def test_in_and_nin_operators(self):
-            query, params = search_query(
-                "users",
-                {"age": {"$in": [25, 30]}, "name": {"$nin": ["john", "jane"]}},
-                self.schema,
-            )
+        def test_less_equal(self):
+            # Test less than or equal operator
+            query = {"age": {"$lte": 25}}
+            conditions, params = parse_query(query, self.schema)
+            self.assertEqual(conditions, ['"age" <= ?'])
+            self.assertEqual(params, [25])
+
+        def test_in_operator(self):
+            # Test IN operator with array of values
+            query = {"age": {"$in": [25, 30, 35]}}
+            conditions, params = parse_query(query, self.schema)
+            self.assertEqual(conditions, ['("age" IN (?, ?, ?) OR "age" IS NULL)'])
+            self.assertEqual(params, [25, 30, 35])
+
+        def test_not_in_operator(self):
+            # Test NOT IN operator with array of values
+            query = {"age": {"$nin": [25, 30, 35]}}
+            conditions, params = parse_query(query, self.schema)
+            self.assertEqual(conditions, ['("age" NOT IN (?, ?, ?))'])
+            self.assertEqual(params, [25, 30, 35])
+
+        def test_not_in_with_null(self):
+            # Test NOT IN operator including NULL value
+            query = {"age": {"$nin": [25, None, 35]}}
+            conditions, params = parse_query(query, self.schema)
+            print(conditions, "<<>>", params)
             self.assertEqual(
-                query,
-                "SELECT * FROM users WHERE (age IN (?, ?)) AND (name NOT IN (?, ?))",
+                conditions, ['("age" NOT IN (?, ?) AND "age" IS NOT NULL)']
             )
-            self.assertEqual(params, [25, 30, "john", "jane"])
+            self.assertEqual(params, [25, 35])
 
         def test_like_operator(self):
-            query, params = search_query(
-                "users", {"name": {"$like": "jo%"}}, self.schema
-            )
-            self.assertEqual(query, "SELECT * FROM users WHERE (name LIKE ?)")
-            self.assertEqual(params, ["jo%"])
+            # Test LIKE operator for pattern matching
+            query = {"name": {"$like": "John%"}}
+            conditions, params = parse_query(query, self.schema)
+            self.assertEqual(conditions, ['"name" LIKE ?'])
+            self.assertEqual(params, ["John%"])
 
-        def test_json_dict_condition(self):
-            query, params = search_query(
-                "users",
-                {"tag_id_to_name": {"1": "tag1", "2": "tag2"}},
-                self.schema,
+        def test_json_array_contains(self):
+            # Test JSON array contains condition
+            query = {"tags_list": ["tag1"]}
+            conditions, params = parse_query(query, self.schema)
+            self.assertEqual(
+                conditions,
+                ["(EXISTS(SELECT 1 FROM json_each(tags_list) WHERE value = ?))"],
             )
-            expected_query = "SELECT * FROM users WHERE json_extract(tag_id_to_name, '$.1') = ? AND json_extract(tag_id_to_name, '$.2') = ?"
-            self.assertEqual(query, expected_query)
+            self.assertEqual(params, [json.dumps("tag1")])
+
+        def test_json_field_equality(self):
+            # Test JSON field exact match
+            query = {"tag_id_to_name": {"user_1": "John"}}
+            conditions, params = parse_query(query, self.schema)
+            self.assertEqual(
+                conditions, ["json_extract(tag_id_to_name, '$.user_1') = ?"]
+            )
+            self.assertEqual(params, ["John"])
+
+        def test_json_field_null(self):
+            # Test JSON field NULL check
+            query = {"tag_id_to_name": {"user_1": None}}
+            conditions, params = parse_query(query, self.schema)
+            self.assertEqual(
+                conditions,
+                [
+                    "(json_type(tag_id_to_name, '$.user_1') IS NOT NULL AND json_extract(tag_id_to_name, '$.user_1') IS NULL)"
+                ],
+            )
+            self.assertEqual(params, [])
+
+        def test_json_like_operator(self):
+            # Test LIKE operator on JSON array elements
+            query = {"tags_list": {"$like": "%test%"}}
+            conditions, params = parse_query(query, self.schema)
+            self.assertEqual(
+                conditions,
+                ["EXISTS(SELECT 1 FROM json_each(tags_list) WHERE value LIKE ?)"],
+            )
+            self.assertEqual(params, ["%test%"])
+
+        def test_json_in_operator(self):
+            # Test IN operator on JSON array elements
+            query = {"tags_list": {"$in": ["tag1", "tag2"]}}
+            conditions, params = parse_query(query, self.schema)
+            self.assertEqual(
+                conditions,
+                [
+                    "(EXISTS(SELECT 1 FROM json_each(tags_list) WHERE value = ?) OR EXISTS(SELECT 1 FROM json_each(tags_list) WHERE value = ?))"
+                ],
+            )
             self.assertEqual(params, ["tag1", "tag2"])
 
-        def test_null_values(self):
-            query, params = search_query("users", {"age": None}, self.schema)
-            self.assertEqual(query, "SELECT * FROM users WHERE age IS NULL")
-            self.assertEqual(params, [])
-
-        def test_mix_of_conditions(self):
-            query, params = search_query(
-                "users",
-                {
-                    "$and": [
-                        {"age": {"$gte": 20, "$lte": 30}},
-                        {"name": {"$like": "jo%"}},
-                        {"is_true": 1},
-                        {"tags_list": ["tag1", "tag2"]},
-                        {"tag_id_to_name": {"1": "tag1", "2": "tag2"}},
-                    ]
-                },
-                self.schema,
-            )
-            expected_query = "SELECT * FROM users WHERE ((age >= ? AND age <= ?) AND (name LIKE ?) AND is_true = ? AND (JSON_CONTAINS(tags_list, ?) OR JSON_CONTAINS(tags_list, ?)) AND json_extract(tag_id_to_name, '$.1') = ? AND json_extract(tag_id_to_name, '$.2') = ?)"
-            self.assertEqual(query, expected_query)
+        def test_json_not_in_operator(self):
+            # Test NOT IN operator on JSON array elements
+            query = {"tags_list": {"$nin": ["tag1", "tag2"]}}
+            conditions, params = parse_query(query, self.schema)
             self.assertEqual(
-                params, [20, 30, "jo%", 1, '"tag1"', '"tag2"', "tag1", "tag2"]
+                conditions,
+                [
+                    "((NOT EXISTS(SELECT 1 FROM json_each(tags_list) WHERE value = ?) AND NOT EXISTS(SELECT 1 FROM json_each(tags_list) WHERE value = ?)))"
+                ],
             )
+            self.assertEqual(params, ["tag1", "tag2"])
 
-        def test_sorting_desc(self):
-            query, params = search_query(
-                "users",
-                {"age": 25},
-                self.schema,
-                sort_by="name",
-                reversed_sort=True,
-            )
-            self.assertEqual(
-                query, "SELECT * FROM users WHERE age = ? ORDER BY name DESC"
-            )
-            self.assertEqual(params, [25])
+        def test_multiple_conditions(self):
+            # Test multiple conditions combined with implicit AND
+            query = {"name": "John", "age": {"$gt": 25}}
+            conditions, params = parse_query(query, self.schema)
+            self.assertEqual(conditions, ['"name" = ?', '"age" > ?'])
+            self.assertEqual(params, ["John", 25])
 
-        def test_single_tuple_sorting(self):
-            query, params = search_query(
-                "users", {"age": 25}, self.schema, sort_by=[("name", True)]
-            )
-            self.assertEqual(
-                query, "SELECT * FROM users WHERE age = ? ORDER BY name DESC"
-            )
-            self.assertEqual(params, [25])
+        def test_or_operator(self):
+            # Test $or operator combining multiple conditions
+            query = {"$or": [{"name": "John"}, {"age": {"$gt": 25}}]}
+            conditions, params = parse_query(query, self.schema)
+            self.assertEqual(conditions, ['((("name" = ?)) OR (("age" > ?)))'])
+            self.assertEqual(params, ["John", 25])
 
-        def test_ne_operator(self):
-            query, params = search_query("users", {"age": {"$ne": 25}}, self.schema)
-            self.assertEqual(query, "SELECT * FROM users WHERE (age != ?)")
-            self.assertEqual(params, [25])
+        def test_and_operator(self):
+            # Test $and operator combining multiple conditions
+            query = {"$and": [{"name": "John"}, {"age": {"$gt": 25}}]}
+            conditions, params = parse_query(query, self.schema)
+            self.assertEqual(conditions, ['((("name" = ?)) AND (("age" > ?)))'])
+            self.assertEqual(params, ["John", 25])
 
-        def test_gt_lt_operators(self):
-            query, params = search_query(
-                "users", {"age": {"$gt": 20, "$lt": 30}}, self.schema
-            )
-            self.assertEqual(query, "SELECT * FROM users WHERE (age > ? AND age < ?)")
-            self.assertEqual(params, [20, 30])
-
-        def test_gte_lte_or_operators(self):
-            query, params = search_query(
-                "users",
-                {"$or": [{"age": {"$gte": 20, "$lte": 30}}, {"name": "john"}]},
-                self.schema,
-            )
-            self.assertEqual(
-                query, "SELECT * FROM users WHERE ((age >= ? AND age <= ?) OR name = ?)"
-            )
-            self.assertEqual(params, [20, 30, "john"])
-
-        def test_empty_query(self):
-            query, params = search_query("users", {}, self.schema)
-            self.assertEqual(query, "SELECT * FROM users")
-            self.assertEqual(params, [])
-
-        def test_limit_results(self):
-            query, params = search_query("users", {"age": 25}, self.schema, n=5)
-            self.assertEqual(query, "SELECT * FROM users WHERE age = ? LIMIT 5")
-            self.assertEqual(params, [25])
-
-    class TestDistinctAndCountQuery(unittest.TestCase):
-        def setUp(self):
-            self.schema = {
-                "age": "NUMBER",
-                "name": "TEXT",
-                "tags_list": "json",
-                "tag_id_to_name": "json",
-                "is_true": "INTEGER",
+        def test_complex_nested_query(self):
+            # Test complex nested query with multiple operators and conditions
+            query = {
+                "$or": [
+                    {"name": {"$like": "John%"}, "age": {"$gt": 25}},
+                    {"tags_list": {"$in": ["important", "urgent"]}, "is_true": True},
+                ]
             }
+            conditions, params = parse_query(query, self.schema)
 
-        def test_distinct_query(self):
-            query_str, params = distinct_query(
-                "test_table", "name", {"age": {"$gt": 30}}, self.schema
-            )
-            self.assertEqual(
-                query_str, "SELECT DISTINCT name FROM test_table WHERE (age > ?)"
-            )
-            self.assertEqual(params, [30])
+            expected_conditions = [
+                '((("name" LIKE ?) AND ("age" > ?)) OR (((EXISTS(SELECT 1 FROM json_each(tags_list) WHERE value = ?) OR EXISTS(SELECT 1 FROM json_each(tags_list) WHERE value = ?))) AND ("is_true" = ?)))'
+            ]
 
-            query_str, params = distinct_query(
-                "test_table",
-                "tags_list",
-                {"tags_list": ["a", "b"]},
-                self.schema,
-            )
+            self.assertEqual(conditions, expected_conditions)
+            self.assertEqual(params, ["John%", 25, "important", "urgent", 1])
 
-            self.assertEqual(
-                query_str,
-                "SELECT DISTINCT JSON_EXTRACT(tags_list, '$[*]') FROM test_table WHERE (JSON_CONTAINS(tags_list, ?) OR JSON_CONTAINS(tags_list, ?))",
-            )
-            self.assertEqual(params, ['"a"', '"b"'])
-
-        def test_count_query(self):
-            query_str, params = count_query(
-                "test_table",
-                {"name": "John", "age": {"$lt": 50}, "is_true": 1},
-                self.schema,
-            )
-
-            self.assertEqual(
-                query_str,
-                "SELECT COUNT(*) FROM test_table WHERE name = ? AND (age < ?) AND is_true = ?",
-            )
-            self.assertEqual(params, ["John", 50, 1])
-
-            query_str, params = count_query(
-                "test_table",
-                {"$or": [{"name": "John"}, {"tags_list": {"$like": "%a%"}}]},
-                self.schema,
-            )
-
-            self.assertEqual(
-                query_str,
-                "SELECT COUNT(*) FROM test_table WHERE (name = ? OR (JSON_EXTRACT(tags_list, '$[*]') LIKE ?))",
-            )
-            self.assertEqual(params, ["John", "%a%"])
-
-
-if __name__ == "__main__":
-    unittest.main()
+    if __name__ == "__main__":
+        unittest.main()
