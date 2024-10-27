@@ -200,6 +200,7 @@ def search_query(
     select_columns=None,
     sort_by_embedding=None,
     sort_by_embedding_metric="cosine",
+    is_update=False,
 ):
     where_conditions, params = parse_query(query, schema)
 
@@ -217,7 +218,10 @@ def search_query(
 
         params.insert(0, sort_by_embedding.tobytes())
     else:
-        select_columns = ("integer_id", "id", "updated_at") + tuple(select_columns)
+        if is_update:
+            select_columns = tuple(select_columns)
+        else:
+            select_columns = ("integer_id", "id", "updated_at") + tuple(select_columns)
 
     selected_columns = (
         ", ".join([f'"{_}"' if isinstance(_, str) else _[0] for _ in select_columns])

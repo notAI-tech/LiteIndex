@@ -438,6 +438,7 @@ class DefinedIndex:
             select_columns=select_keys if not update else ["id"],
             sort_by_embedding=sort_by_embedding,
             sort_by_embedding_metric=sort_by_embedding_metric,
+            is_update=True if update else False,
         )
 
         _results = None
@@ -691,7 +692,7 @@ class DefinedIndex:
     ):
         """
         Creates a trigger in the database that executes a Python function when specified events occur.
-        
+
         Args:
             trigger_name (str): Name of the trigger
             for_key (str): The column to monitor for changes
@@ -709,26 +710,26 @@ class DefinedIndex:
             raise ValueError("Exactly one trigger type must be specified")
 
         trigger_key = f"trigger_func_{trigger_name}"
-        
+
         # Register the Python function as a SQLite function
         def wrapped_trigger_func(*args):
             function_to_trigger(*args)
             return 1
 
         self.__connection.create_function(trigger_key, 1, wrapped_trigger_func)
-        
+
         # Determine trigger timing and event
         when = "BEFORE" if before_delete or before_set else "AFTER"
         if before_delete or after_delete:
             events = ["DELETE"]
         else:
             events = ["INSERT", "UPDATE"]
-        
+
         # Create triggers for each event
         with self.__connection:
             for event in events:
                 value_ref = "NEW" if event in ("INSERT", "UPDATE") else "OLD"
-                
+
                 trigger_sql = f"""
                 CREATE TRIGGER IF NOT EXISTS "{trigger_name}_{event.lower()}"
                 {when} {event} ON "{self.name}"
@@ -741,20 +742,26 @@ class DefinedIndex:
     def drop_trigger(self, trigger_name):
         """
         Removes a trigger from the database.
-        
+
         Args:
             trigger_name (str): Name of the trigger to remove
         """
         with self.__connection:
             # Drop both INSERT and UPDATE triggers if they exist
-            self.__connection.execute(f"""DROP TRIGGER IF EXISTS "{trigger_name}_insert";""")
-            self.__connection.execute(f"""DROP TRIGGER IF EXISTS "{trigger_name}_update";""")
-            self.__connection.execute(f"""DROP TRIGGER IF EXISTS "{trigger_name}_delete";""")
+            self.__connection.execute(
+                f"""DROP TRIGGER IF EXISTS "{trigger_name}_insert";"""
+            )
+            self.__connection.execute(
+                f"""DROP TRIGGER IF EXISTS "{trigger_name}_update";"""
+            )
+            self.__connection.execute(
+                f"""DROP TRIGGER IF EXISTS "{trigger_name}_delete";"""
+            )
 
     def list_triggers(self):
         """
         Returns a list of all triggers defined for this index.
-        
+
         Returns:
             list: List of trigger names
         """
