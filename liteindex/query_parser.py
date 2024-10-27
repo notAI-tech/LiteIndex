@@ -217,7 +217,7 @@ def search_query(
 
         params.insert(0, sort_by_embedding.tobytes())
     else:
-        select_columns = ("integer_id", "id", "updated_at") + select_columns
+        select_columns = ("integer_id", "id", "updated_at") + tuple(select_columns)
 
     selected_columns = (
         ", ".join([f'"{_}"' if isinstance(_, str) else _[0] for _ in select_columns])
