@@ -316,7 +316,7 @@ def search_query(
         query_str += f" WHERE {' AND '.join(where_conditions)}"
 
     if sort_by_embedding is not None:
-        query_str += f""" ORDER BY __distance {'ASC' if reversed_sort else 'DESC'}"""
+        query_str += f""" ORDER BY __distance {'DESC' if reversed_sort else 'ASC'}"""
     elif sort_by:
         if isinstance(sort_by, list):
             query_str += " ORDER BY "
