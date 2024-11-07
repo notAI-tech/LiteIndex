@@ -95,7 +95,14 @@ class DefinedIndex:
         pass
 
     def __init__(
-        self, name, schema=None, db_path=None, ram_cache_mb=64, compression_level=None
+        self,
+        name,
+        schema=None,
+        db_path=None,
+        ram_cache_mb=64,
+        compression_level=None,
+        auto_vacuum=True,
+        auto_vacuum_increment=1000,
     ):
         if sqlite3.sqlite_version < "3.35.0":
             raise ValueError(
@@ -107,6 +114,8 @@ class DefinedIndex:
         self.db_path = ":memory:" if db_path is None else db_path
         self.ram_cache_mb = ram_cache_mb
         self.compression_level = compression_level
+        self.auto_vacuum = auto_vacuum
+        self.auto_vacuum_increment = auto_vacuum_increment
 
         if self.name.startswith("__"):
             raise ValueError("Index name cannot start with '__'")
@@ -150,8 +159,11 @@ class DefinedIndex:
             self.__local_storage.db_conn.execute("PRAGMA journal_mode=WAL")
             self.__local_storage.db_conn.execute("PRAGMA synchronous=NORMAL")
 
-            self.__local_storage.db_conn.execute("PRAGMA auto_vacuum=FULL")
-            self.__local_storage.db_conn.execute("PRAGMA auto_vacuum_increment=1000")
+            if self.auto_vacuum:
+                self.__local_storage.db_conn.execute("PRAGMA auto_vacuum=FULL")
+                self.__local_storage.db_conn.execute(
+                    f"PRAGMA auto_vacuum_increment={self.auto_vacuum_increment}"
+                )
 
             self.__local_storage.db_conn.execute(
                 f"PRAGMA cache_size=-{self.ram_cache_mb * 1024}"
