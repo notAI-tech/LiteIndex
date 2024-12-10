@@ -208,6 +208,13 @@ class DefinedIndex:
             )
         return self.__local_storage.decompressor
 
+    def _sql_query(self, query, params=None, commit=False):
+        with self.__connection:
+            res = self.__connection.execute(query, params).fetchall()
+            if commit:
+                self.__connection.commit()
+            return res
+
     def __validate_set_schema_if_exists(self):
         try:
             rows = self.__connection.execute(
